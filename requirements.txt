@@ -1,0 +1,9 @@
+torch>=2.1.0
+opencv-python>=4.8.0
+numpy>=1.24.0
+Pillow>=10.0.0
+gradio>=4.44.0
+tqdm>=4.66.0
+onnx>=1.15.0
+onnxruntime>=1.17.0
+ultralytics>=8.3.0

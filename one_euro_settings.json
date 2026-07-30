@@ -1,0 +1,9 @@
+{
+  "min_cutoff": 1.2,
+  "beta": 0.25,
+  "d_cutoff": 1.19,
+  "rest_speed_px": 0.0,
+  "rest_hold_frames": 3,
+  "rest_release_mult": 2.0,
+  "max_step_px": 20.0
+}

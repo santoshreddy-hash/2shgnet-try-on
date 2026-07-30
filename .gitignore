@@ -1,0 +1,37 @@
+# Dependencies
+.venv/
+venv/
+env/
+web/node_modules/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
+
+# Datasets (do not publish)
+data/**
+!data/.gitkeep
+
+# Model weight binaries (place locally after clone)
+*.pth
+*.pt
+*.onnx
+*.weights
+
+# Training / export / cache outputs (do not publish)
+outputs/**
+!outputs/.gitkeep
+__MACOSX/
+
+# Logs
+*.log
+
+# Local env
+.env
+.env.*

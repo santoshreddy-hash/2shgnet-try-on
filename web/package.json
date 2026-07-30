@@ -1,0 +1,13 @@
+{
+  "name": "shgnet56-onnx-web",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Browser WASM demo for SHGNet-56 ONNX ear landmarks",
+  "type": "module",
+  "scripts": {
+    "start": "node server.mjs"
+  },
+  "dependencies": {
+    "onnxruntime-web": "^1.20.0"
+  }
+}

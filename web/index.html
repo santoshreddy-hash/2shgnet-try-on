@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>SHGNet-56 — browser ONNX</title>
+  <style>
+    :root {
+      --bg: #0f1419;
+      --panel: #1a222c;
+      --text: #e8eef4;
+      --muted: #8b9aab;
+      --accent: #3ecf8e;
+      --warn: #f0b429;
+      --danger: #e85d5d;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: "IBM Plex Sans", "Segoe UI", sans-serif;
+      background: radial-gradient(1200px 600px at 20% -10%, #1c2a38, var(--bg));
+      color: var(--text);
+      min-height: 100vh;
+    }
+    main {
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 1.5rem 1.25rem 2.5rem;
+    }
+    h1 {
+      font-family: "IBM Plex Serif", Georgia, serif;
+      font-weight: 600;
+      font-size: 1.65rem;
+      margin: 0 0 0.35rem;
+      letter-spacing: -0.02em;
+    }
+    .sub { color: var(--muted); margin-bottom: 1.25rem; line-height: 1.45; max-width: 52rem; }
+    .layout {
+      display: grid;
+      grid-template-columns: minmax(260px, 340px) 1fr;
+      gap: 1rem;
+      align-items: start;
+    }
+    @media (max-width: 860px) {
+      .layout { grid-template-columns: 1fr; }
+    }
+    .panel {
+      background: color-mix(in srgb, var(--panel) 92%, transparent);
+      border: 1px solid #2a3542;
+      padding: 1rem;
+    }
+    .stage {
+      position: relative;
+      background: #000;
+      width: 100%;
+      min-height: 320px;
+      overflow: hidden;
+      border: 1px solid #2a3542;
+    }
+    #video { display: none; }
+    #out {
+      display: block;
+      width: 100%;
+      height: auto;
+      max-height: 75vh;
+      object-fit: contain;
+      background: #000;
+    }
+    .hint {
+      font-size: 0.85rem;
+      color: var(--muted);
+      margin: 0.75rem 0 0;
+      line-height: 1.4;
+    }
+    .actions { display: flex; flex-wrap: wrap; gap: 0.35rem; align-items: center; }
+    button {
+      appearance: none;
+      border: 0;
+      background: var(--accent);
+      color: #062016;
+      font-weight: 600;
+      padding: 0.65rem 0.9rem;
+      cursor: pointer;
+    }
+    button.stop { background: var(--danger); color: #fff; }
+    button:disabled { opacity: 0.45; cursor: not-allowed; }
+    #status {
+      font-family: ui-monospace, monospace;
+      font-size: 0.82rem;
+      white-space: pre-wrap;
+      color: var(--muted);
+      margin-top: 0.85rem;
+    }
+    #sizes { margin-top: 1rem; font-size: 0.9rem; line-height: 1.55; }
+    #sizes strong { color: var(--warn); }
+    table { width: 100%; border-collapse: collapse; margin-top: 0.5rem; font-size: 0.85rem; }
+    td, th { text-align: left; padding: 0.3rem 0.35rem; border-bottom: 1px solid #2a3542; }
+    th { color: var(--muted); font-weight: 500; }
+    code { color: var(--accent); font-size: 0.85em; }
+    .fps-control {
+      margin-top: 0.85rem;
+      padding-top: 0.85rem;
+      border-top: 1px solid #2a3542;
+    }
+    .fps-control label {
+      display: flex;
+      flex-direction: column;
+      gap: 0.35rem;
+      font-size: 0.85rem;
+      color: var(--muted);
+    }
+    .fps-control .row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .fps-control .val {
+      color: var(--text);
+      font-variant-numeric: tabular-nums;
+      font-weight: 600;
+    }
+    .fps-control input[type="range"] {
+      width: 100%;
+      accent-color: var(--accent);
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>SHGNet-56 — live in browser</h1>
+    <p class="sub">
+      WASM ONNX pipeline (no Gradio): YOLO tip → ear crop → SHGNet-56 → One Euro.
+      Piercing (#56) highlighted in red.
+    </p>
+
+    <div class="layout">
+      <div class="panel">
+        <div class="actions">
+          <button id="loadModel">Load models</button>
+          <button id="startCam" disabled>Start live cam</button>
+          <button id="stopCam" class="stop" disabled>Stop cam</button>
+        </div>
+        <div class="fps-control">
+          <label>
+            <span class="row"><span>Target FPS</span><span class="val" id="fpsTargetVal">30</span></span>
+            <input type="range" id="fpsSlider" min="20" max="30" value="30" step="1" />
+          </label>
+        </div>
+        <p class="hint">
+          Clear side profile. Models: <code>yolo26n-pose.onnx</code> +
+          <code>SHGNet-56.onnx</code>. Display target 20–30 FPS; inference is sparse + tip-hold.
+        </p>
+        <p id="status">Click Load models…</p>
+        <div id="sizes"></div>
+      </div>
+      <div class="stage">
+        <video id="video" playsinline muted></video>
+        <canvas id="out" width="640" height="480"></canvas>
+      </div>
+    </div>
+  </main>
+
+  <script type="module" src="./infer.js"></script>
+</body>
+</html>
