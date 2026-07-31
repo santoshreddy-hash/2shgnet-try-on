@@ -9,7 +9,7 @@ from typing import Optional, Tuple
 import cv2
 import numpy as np
 
-from train.config import INPUT_SIZE, NUM_LANDMARKS_56, ONNX_EXPORT
+from train.config import INPUT_SIZE, NUM_LANDMARKS_56, resolve_onnx_export
 
 
 def preprocess_ear_bgr_numpy(ear_bgr: np.ndarray, size: int = INPUT_SIZE) -> np.ndarray:
@@ -70,11 +70,12 @@ class SHGNet56Onnx:
     ) -> None:
         import onnxruntime as ort
 
-        path = Path(onnx_path) if onnx_path else ONNX_EXPORT
+        path = Path(onnx_path) if onnx_path else resolve_onnx_export()
         path = path.resolve()
-        if not path.is_file():
+        if not path.is_file() or path.stat().st_size < 1_000_000:
             raise FileNotFoundError(
-                f"ONNX not found: {path}\nRun: python -m train.export_onnx"
+                f"ONNX not found or stub: {path}\n"
+                "Place models/shgnet/SHGNet-56.onnx or run: python -m train.export_onnx"
             )
 
         avail = set(ort.get_available_providers())

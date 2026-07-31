@@ -31,6 +31,7 @@ from train.config import (
     STAGE3_EPOCHS,
     STAGE3_LR,
     VAL_SPLIT,
+    resolve_pretrained_56,
 )
 from train.dataset import Piercing56Dataset, discover_annotated, train_val_split
 from train.yolo_pose_labels import labels_dir_for_images
@@ -206,13 +207,19 @@ def main() -> int:
     p.add_argument(
         "--from-stage2",
         action="store_true",
-        help="Skip stage 1; load --checkpoint and run stage 2 (+ stage 3 unless --skip-stage3)",
+        default=True,
+        help="Default: fine-tune SHGNet-56 (stage 2 + 3). Does not expand from 55.",
+    )
+    p.add_argument(
+        "--from-55",
+        action="store_true",
+        help="Legacy: expand pretrained 55-LM hourglass → 56, then stages 1–3",
     )
     p.add_argument(
         "--checkpoint",
         default=None,
-        help="Checkpoint for --from-stage2 / --stage3-only "
-        "(defaults: best_stage2.pth, or best_stage1.pth for --from-stage2)",
+        help="SHGNet-56 .pth (default: models/shgnet/SHGNet-56_final.pth "
+        "or outputs/checkpoints/SHGNet-56_final.pth)",
     )
     p.add_argument(
         "--images-dir",
@@ -307,19 +314,34 @@ def main() -> int:
 
     results = {}
 
-    if args.stage3_only and args.from_stage2:
-        print("Use only one of --stage3-only / --from-stage2", file=sys.stderr)
+    use_from_55 = bool(args.from_55)
+    use_from_stage2 = bool(args.from_stage2) and not use_from_55 and not args.stage3_only
+
+    if args.stage3_only and use_from_55:
+        print("Use only one of --stage3-only / --from-55", file=sys.stderr)
         return 1
 
+    def _resolve_56_ckpt() -> Path | None:
+        if args.checkpoint:
+            pth = Path(args.checkpoint)
+            if pth.is_file() and pth.stat().st_size > 1_000_000:
+                return pth
+            print(
+                f"Checkpoint missing or not a real .pth (stub/tiny?): {pth}",
+                file=sys.stderr,
+            )
+            return None
+        return resolve_pretrained_56()
+
     if args.stage3_only:
-        ckpt_path = Path(args.checkpoint) if args.checkpoint else (ckpt_dir / "best_stage2.pth")
-        if not ckpt_path.is_file():
-            alt = ckpt_dir / "best_stage3.pth"
-            if alt.is_file():
-                ckpt_path = alt
-            else:
-                print(f"Checkpoint not found: {ckpt_path}", file=sys.stderr)
-                return 1
+        ckpt_path = _resolve_56_ckpt()
+        if ckpt_path is None:
+            print(
+                "Need SHGNet-56 .pth at models/shgnet/SHGNet-56_final.pth "
+                "or --checkpoint path",
+                file=sys.stderr,
+            )
+            return 1
         model, meta = load_checkpoint_into_56(ckpt_path, device)
         print(f"Resuming Stage 3 from {ckpt_path}")
         unfreeze_all(model)
@@ -328,17 +350,19 @@ def main() -> int:
             model, train_loader, val_loader, device,
             args.stage3_epochs, STAGE3_LR, "stage3", ckpt_dir,
         )
-    elif args.from_stage2:
-        ckpt_path = Path(args.checkpoint) if args.checkpoint else (ckpt_dir / "best_stage2.pth")
-        if not ckpt_path.is_file():
-            alt = ckpt_dir / "best_stage1.pth"
-            if alt.is_file():
-                ckpt_path = alt
-            else:
-                print(f"Checkpoint not found: {ckpt_path}", file=sys.stderr)
-                return 1
+    elif use_from_stage2:
+        ckpt_path = _resolve_56_ckpt()
+        if ckpt_path is None:
+            print(
+                "Need a real SHGNet-56 .pth to fine-tune.\n"
+                "Place at models/shgnet/SHGNet-56_final.pth\n"
+                "or pass --checkpoint path/to/SHGNet-56_final.pth\n"
+                "Legacy only: --from-55",
+                file=sys.stderr,
+            )
+            return 1
         model, meta = load_checkpoint_into_56(ckpt_path, device)
-        print(f"Resuming Stage 2 from {ckpt_path}")
+        print(f"Fine-tuning SHGNet-56 from {ckpt_path} (stage 2 + 3)")
         unfreeze_last_hourglass(model)
         print(f"Stage 2 trainable params: {trainable_param_count(model):,}")
         results["stage2"] = run_stage(

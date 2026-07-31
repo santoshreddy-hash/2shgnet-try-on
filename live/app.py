@@ -36,9 +36,9 @@ from train.config import (
     FRAME_HEIGHT,
     FRAME_WIDTH,
     INPUT_SIZE,
-    ONNX_EXPORT,
     PIERCING_INDEX,
-    YOLO_ONNX,
+    resolve_onnx_export,
+    resolve_yolo_onnx,
 )
 from train.crop import EarCropper, crop_with_meta, landmarks_ok, remap_points_to_full
 from train.shgnet_onnx import SHGNet56Onnx
@@ -94,10 +94,16 @@ def _make_filter() -> OneEuroLandmarkFilter:
 def load_pipeline():
     if _STATE["landmarker"] is not None:
         return
-    if not Path(ONNX_EXPORT).is_file():
-        raise FileNotFoundError(f"Missing {ONNX_EXPORT} — run: python -m train.export_onnx")
-    _STATE["landmarker"] = SHGNet56Onnx(ONNX_EXPORT)
-    _STATE["cropper"] = EarCropper(YOLO_ONNX)
+    onnx_path = resolve_onnx_export()
+    yolo_path = resolve_yolo_onnx()
+    if not Path(onnx_path).is_file() or Path(onnx_path).stat().st_size < 1_000_000:
+        raise FileNotFoundError(
+            f"Missing real SHGNet-56 ONNX at {onnx_path} — place models/shgnet/SHGNet-56.onnx "
+            "or run: python -m train.export_onnx"
+        )
+    _STATE["landmarker"] = SHGNet56Onnx(onnx_path)
+    _STATE["cropper"] = EarCropper(yolo_path)
+    _STATE["_onnx_name"] = Path(onnx_path).name
     _STATE["filt"] = _make_filter()
     _STATE["t_prev"] = None
     _STATE["mode_key"] = None
@@ -329,7 +335,7 @@ def build_demo() -> gr.Blocks:
         load_pipeline()
         oe = load_one_euro_settings()
         banner = (
-            f"**ONNX pipeline** · `{Path(ONNX_EXPORT).name}` + YOLO pose · "
+            f"**ONNX pipeline** · `{_STATE.get('_onnx_name', 'SHGNet-56.onnx')}` + YOLO pose · "
             f"One Euro on (jewellery: min={oe['min_cutoff']} β={oe['beta']} "
             f"d={oe['d_cutoff']} rest={oe['rest_speed_px']} step≤{oe['max_step_px']}) · "
             f"**webcam FPS {CAMERA_FPS_MIN}–{CAMERA_FPS_MAX}**"

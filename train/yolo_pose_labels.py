@@ -12,12 +12,15 @@ from typing import List, Optional, Tuple
 import cv2
 import numpy as np
 
-from train.config import NUM_LANDMARKS_55, NUM_LANDMARKS_56, PIERCING_INDEX
+from train.config import (
+    EAR_POSE_ROOT,
+    NUM_LANDMARKS_55,
+    NUM_LANDMARKS_56,
+    PIERCING_INDEX,
+)
 
 IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
-DEFAULT_EAR_POSE = Path(
-    "/Users/santoshreddy/Documents/virtual try on/ear_landmark_live/data/ear_pose"
-)
+DEFAULT_EAR_POSE = EAR_POSE_ROOT
 DEFAULT_EAR_POSE_TRAIN = DEFAULT_EAR_POSE / "images" / "train"
 
 

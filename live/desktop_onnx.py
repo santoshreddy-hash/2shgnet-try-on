@@ -34,10 +34,10 @@ from train.config import (
     FRAME_HEIGHT,
     FRAME_WIDTH,
     INPUT_SIZE,
-    ONNX_EXPORT,
     OUTPUTS,
     PIERCING_INDEX,
-    YOLO_ONNX,
+    resolve_onnx_export,
+    resolve_yolo_onnx,
 )
 from train.crop import (
     EarCropper,
@@ -151,7 +151,7 @@ def main() -> int:
     p.add_argument("--height", type=int, default=min(540, FRAME_HEIGHT))
     p.add_argument("--fps", type=int, default=CAMERA_FPS)
     p.add_argument("--yolo-every", type=int, default=2)
-    p.add_argument("--onnx", default=str(ONNX_EXPORT))
+    p.add_argument("--onnx", default=str(resolve_onnx_export()))
     p.add_argument("--no-mirror", action="store_true")
     args = p.parse_args()
 
@@ -160,11 +160,12 @@ def main() -> int:
     mirror = not args.no_mirror
 
     onnx_path = Path(args.onnx)
-    if not onnx_path.is_file():
-        print(f"Missing {onnx_path}", file=sys.stderr)
+    yolo_path = resolve_yolo_onnx()
+    if not onnx_path.is_file() or onnx_path.stat().st_size < 1_000_000:
+        print(f"Missing real ONNX: {onnx_path}", file=sys.stderr)
         return 1
-    if not Path(YOLO_ONNX).is_file():
-        print(f"Missing {YOLO_ONNX}", file=sys.stderr)
+    if not yolo_path.is_file() or yolo_path.stat().st_size < 1_000_000:
+        print(f"Missing real YOLO ONNX: {yolo_path}", file=sys.stderr)
         return 1
 
     oe = load_one_euro_settings()
@@ -177,7 +178,7 @@ def main() -> int:
     print("  Show a CLEAR SIDE PROFILE of one ear.")
 
     landmarker = SHGNet56Onnx(onnx_path)
-    cropper = EarCropper(YOLO_ONNX)
+    cropper = EarCropper(yolo_path)
     filt = make_landmark_filter()
     step_px = max(float(max_step_px()), 28.0)
 
