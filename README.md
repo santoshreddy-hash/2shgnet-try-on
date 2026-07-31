@@ -80,6 +80,17 @@ python scripts/wire_local_dataset.py `
 ```
 
 The script prints a **readiness** summary (`paired` image/label count + checkpoint). Train only when it says `READY`.
+
+If Cursor fails to switch branches with `git stash --include-untracked` / `could not write index`, your local dataset pack is too large to stash. In PowerShell from the repo root:
+
+```powershell
+# clear a stuck lock if present
+Remove-Item -Force .git\index.lock -ErrorAction SilentlyContinue
+git fetch origin
+git checkout cursor/wire-local-assets-e1d3
+# if checkout still refuses, keep local files and force the branch tip:
+git switch -C cursor/wire-local-assets-e1d3 origin/cursor/wire-local-assets-e1d3 --discard-changes
+```
 ## Quick commands
 
 ```bash

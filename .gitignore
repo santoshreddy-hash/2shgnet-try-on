@@ -20,6 +20,10 @@ data/**
 !data/**/README.md
 !data/**/.gitkeep
 
+# Local Windows asset packs (untracked bulk files break `git stash -u` / checkout)
+dataset annotated/
+datasetr annotated/
+
 # Model weight binaries (place locally after clone)
 *.pth
 *.pt
