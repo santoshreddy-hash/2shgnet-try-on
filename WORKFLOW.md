@@ -33,6 +33,19 @@ models/shgnet/SHGNet-56_final.pth   ← required to fine-tune
 models/yolo26n-pose.onnx            ← required for live crop
 ```
 
+### One-shot wire from Windows pack
+
+```powershell
+# From D:\try on proj\2shgnet-try-on
+.\scripts\wire_local_windows.ps1
+```
+
+Expects:
+
+- `.\SHGNet-56_final.pth`
+- `.\dataset annotated\datasetr annotated\images`
+- `.\dataset annotated\datasetr annotated\labels`
+
 **Label format:** one line per ear  
 `0 cx cy w h  x1 y1 v1 … x56 y56 v56` (coords 0–1).  
 Piercing is keypoint **#56** (index 55). Samples without #56 are skipped.

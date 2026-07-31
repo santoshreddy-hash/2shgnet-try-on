@@ -160,11 +160,12 @@ def main() -> int:
     mirror = not args.no_mirror
 
     onnx_path = Path(args.onnx)
-    if not onnx_path.is_file():
-        print(f"Missing {onnx_path}", file=sys.stderr)
+    yolo_path = resolve_yolo_onnx()
+    if not onnx_path.is_file() or onnx_path.stat().st_size < 1_000_000:
+        print(f"Missing real ONNX: {onnx_path}", file=sys.stderr)
         return 1
-    if not Path(YOLO_ONNX).is_file():
-        print(f"Missing {YOLO_ONNX}", file=sys.stderr)
+    if not yolo_path.is_file() or yolo_path.stat().st_size < 1_000_000:
+        print(f"Missing real YOLO ONNX: {yolo_path}", file=sys.stderr)
         return 1
 
     oe = load_one_euro_settings()
@@ -177,7 +178,7 @@ def main() -> int:
     print("  Show a CLEAR SIDE PROFILE of one ear.")
 
     landmarker = SHGNet56Onnx(onnx_path)
-    cropper = EarCropper(YOLO_ONNX)
+    cropper = EarCropper(yolo_path)
     filt = make_landmark_filter()
     step_px = max(float(max_step_px()), 28.0)
 

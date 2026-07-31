@@ -57,7 +57,26 @@ pip install -r requirements.txt
 
 Label line (YOLO-pose): `class cx cy w h` + 56 × `(x y v)` normalized 0–1.
 
-If you have `labels.zip` (train/val `.txt` only):
+### Windows: wire your existing pack + `.pth` (recommended)
+
+If you already have:
+
+- `dataset annotated\datasetr annotated\images` (+ `labels`)
+- `SHGNet-56_final.pth` at the repo root
+
+run (PowerShell, repo root):
+
+```powershell
+.\scripts\wire_local_windows.ps1
+# or:
+python .\scripts\wire_local_dataset.py `
+  --pack ".\dataset annotated\datasetr annotated" `
+  --checkpoint ".\SHGNet-56_final.pth"
+```
+
+This hardlinks (or copies) into `data/data/ear_pose/` and `models/shgnet/`.
+
+If you have `labels.zip` only (train/val `.txt`):
 
 ```bash
 unzip -qo labels.zip -d /tmp/lb
