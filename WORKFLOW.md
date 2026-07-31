@@ -93,6 +93,20 @@ python -m train.train --from-55 --device cuda
 
 Online augmentation (flip / rotate / scale / …) runs **in memory** — no augmented files on disk.
 
+### On-the-fly 45 variants (recommended for full train)
+
+```bash
+python -m train.train --device cuda --variants-per-image 45
+```
+
+Effective train size ≈ `N_train × 45` (e.g. 2200 × 45 ≈ 99k samples/epoch).
+
+Smoke (validate only, 1 train step — no full epochs):
+
+```bash
+python scripts/smoke_train_45aug.py
+```
+
 ## 4. Export ONNX
 
 ```bash

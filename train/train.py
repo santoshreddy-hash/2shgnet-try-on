@@ -241,6 +241,12 @@ def main() -> int:
         default=None,
         help="Optional tag stored in results / final checkpoint metadata",
     )
+    p.add_argument(
+        "--variants-per-image",
+        type=int,
+        default=1,
+        help="On-the-fly additive augs per image (45 = full family pack; 1 = random/none)",
+    )
     args = p.parse_args()
 
     device = select_device(args.device)
@@ -278,15 +284,18 @@ def main() -> int:
     print(f"Images dir: {img_dir}")
     print(f"Ckpt dir: {ckpt_dir}")
     print(f"Device: {device}")
+    vpi = max(1, int(args.variants_per_image))
+    print(f"Variants/image (train): {vpi} → effective train samples ≈ {len(train_names) * vpi}")
 
     train_ds = Piercing56Dataset(
         train_names,
         img_dir=img_dir,
         ann_dir=ann_dir,
-        augment=True,
+        augment=(vpi <= 1),
         cache_dir=cache_dir,
         fill_55_with_pretrained=False,
         device="cpu",
+        variants_per_image=vpi,
     )
     val_ds = Piercing56Dataset(
         val_names,
@@ -296,6 +305,7 @@ def main() -> int:
         cache_dir=cache_dir,
         fill_55_with_pretrained=False,
         device="cpu",
+        variants_per_image=1,
     )
     train_loader = DataLoader(
         train_ds,

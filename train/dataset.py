@@ -33,6 +33,7 @@ from train.config import (
 )
 from train.crop import EarCropper, remap_points_to_crop
 from train.heatmaps import generate_gaussian_heatmaps
+from train.online_variants import VARIANTS_PER_IMAGE, apply_variant
 from train.shgnet_base import SHGNetEarLandmarker, preprocess_ear_bgr
 from train.yolo_pose_labels import (
     get_piercing_px,
@@ -76,11 +77,15 @@ class Piercing56Dataset(Dataset):
         cache_dir: Optional[Path] = None,
         fill_55_with_pretrained: bool = True,
         device: str = "cpu",
+        variants_per_image: int = 1,
     ) -> None:
         self.img_dir = Path(img_dir)
         self.ann_dir = Path(ann_dir)
         self.augment = augment
         self.aug_cfg = AugmentConfig()
+        # Expand each image into fixed additive variants (on-the-fly, no disk).
+        # When >1, disables random augment_sample in favor of apply_variant.
+        self.variants_per_image = max(1, int(variants_per_image))
         self.mode = "yolo" if is_yolo_pose_images_dir(self.img_dir) else "pts"
         self.labels_dir = (
             labels_dir_for_images(self.img_dir) if self.mode == "yolo" else None
@@ -105,7 +110,16 @@ class Piercing56Dataset(Dataset):
         self.landmarker: Optional[SHGNetEarLandmarker] = None
 
     def __len__(self) -> int:
-        return len(self.names)
+        return len(self.names) * self.variants_per_image
+
+    def _base_index(self, idx: int) -> Tuple[int, int]:
+        """Return (image_index, variant_id)."""
+        n = len(self.names)
+        if n == 0:
+            raise IndexError("empty dataset")
+        if self.variants_per_image <= 1:
+            return idx % n, 0
+        return idx // self.variants_per_image, idx % self.variants_per_image
 
     def _cached_55(self, stem: str) -> Optional[np.ndarray]:
         if not self.cache_dir:
@@ -221,7 +235,8 @@ class Piercing56Dataset(Dataset):
         return crop, landmarks
 
     def __getitem__(self, idx: int):
-        name = self.names[idx]
+        img_i, var_i = self._base_index(idx)
+        name = self.names[img_i]
         img_path = self.img_dir / name
         image = cv2.imread(str(img_path))
         if image is None:
@@ -232,8 +247,13 @@ class Piercing56Dataset(Dataset):
         else:
             crop, landmarks = self._getitem_pts(name, image)
 
-        if self.augment:
+        tag = "none"
+        if self.variants_per_image > 1:
+            seed = abs(hash(name)) % (2**31 - 1)
+            tag, crop, landmarks = apply_variant(crop, landmarks, var_i, seed=seed)
+        elif self.augment:
             crop, landmarks = augment_sample(crop, landmarks, self.aug_cfg)
+            tag = "random"
 
         heatmaps = generate_gaussian_heatmaps(landmarks)
         tensor = preprocess_ear_bgr(crop, INPUT_SIZE).squeeze(0)
@@ -242,7 +262,7 @@ class Piercing56Dataset(Dataset):
             "image": tensor,
             "heatmaps": torch.from_numpy(heatmaps),
             "landmarks": torch.from_numpy(landmarks.astype(np.float32)),
-            "name": name,
+            "name": name if tag == "none" else f"{name}__{tag}",
         }
 
 
