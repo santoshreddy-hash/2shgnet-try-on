@@ -57,34 +57,29 @@ pip install -r requirements.txt
 
 Label line (YOLO-pose): `class cx cy w h` + 56 × `(x y v)` normalized 0–1.
 
-### Windows: wire your existing pack + `.pth` (recommended)
+### Wire local assets (recommended)
 
-If you already have:
+One command hardlinks/copies into `data/data/ear_pose/` + `models/shgnet/`:
 
-- `dataset annotated\datasetr annotated\images` (+ `labels`)
-- `SHGNet-56_final.pth` at the repo root
-
-run (PowerShell, repo root):
+| Source | Expected path |
+|--------|----------------|
+| Images | `dataset annotated\datasetr annotated\images` |
+| Labels | `labels.zip` (repo root) **or** pack `labels/` |
+| Weights | `SHGNet-56_final.pth` (repo root) |
 
 ```powershell
+# Windows (PowerShell, repo root)
 .\scripts\wire_local_windows.ps1
-# or:
-python .\scripts\wire_local_dataset.py `
-  --pack ".\dataset annotated\datasetr annotated" `
-  --checkpoint ".\SHGNet-56_final.pth"
+
+# or any OS:
+python scripts/wire_local_dataset.py
+python scripts/wire_local_dataset.py `
+  --images "dataset annotated/datasetr annotated/images" `
+  --checkpoint SHGNet-56_final.pth `
+  --labels-zip labels.zip
 ```
 
-This hardlinks (or copies) into `data/data/ear_pose/` and `models/shgnet/`.
-
-If you have `labels.zip` only (train/val `.txt`):
-
-```bash
-unzip -qo labels.zip -d /tmp/lb
-cp -a /tmp/lb/labels/train/. data/data/ear_pose/labels/train/
-cp -a /tmp/lb/labels/val/.   data/data/ear_pose/labels/val/
-# still add matching images under images/{train,val}/
-```
-
+The script prints a **readiness** summary (`paired` image/label count + checkpoint). Train only when it says `READY`.
 ## Quick commands
 
 ```bash

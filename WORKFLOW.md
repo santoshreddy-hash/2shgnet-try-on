@@ -33,18 +33,24 @@ models/shgnet/SHGNet-56_final.pth   ← required to fine-tune
 models/yolo26n-pose.onnx            ← required for live crop
 ```
 
-### One-shot wire from Windows pack
+### One-shot wire local assets
 
 ```powershell
 # From D:\try on proj\2shgnet-try-on
 .\scripts\wire_local_windows.ps1
 ```
 
-Expects:
+```bash
+python scripts/wire_local_dataset.py
+```
+
+Expects (any subset is wired; missing pieces are reported):
 
 - `.\SHGNet-56_final.pth`
-- `.\dataset annotated\datasetr annotated\images`
-- `.\dataset annotated\datasetr annotated\labels`
+- `.\dataset annotated\datasetr annotated\images` (optional `labels/`)
+- `.\labels.zip` → extracted to `data/data/ear_pose/labels/{train,val}/`
+
+Broken Mac symlink stubs in `models.zip` are ignored; place real `.pth` / `.onnx` files.
 
 **Label format:** one line per ear  
 `0 cx cy w h  x1 y1 v1 … x56 y56 v56` (coords 0–1).  
