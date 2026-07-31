@@ -34,10 +34,10 @@ from train.config import (
     FRAME_HEIGHT,
     FRAME_WIDTH,
     INPUT_SIZE,
-    ONNX_EXPORT,
     OUTPUTS,
     PIERCING_INDEX,
-    YOLO_ONNX,
+    resolve_onnx_export,
+    resolve_yolo_onnx,
 )
 from train.crop import (
     EarCropper,
@@ -151,7 +151,7 @@ def main() -> int:
     p.add_argument("--height", type=int, default=min(540, FRAME_HEIGHT))
     p.add_argument("--fps", type=int, default=CAMERA_FPS)
     p.add_argument("--yolo-every", type=int, default=2)
-    p.add_argument("--onnx", default=str(ONNX_EXPORT))
+    p.add_argument("--onnx", default=str(resolve_onnx_export()))
     p.add_argument("--no-mirror", action="store_true")
     args = p.parse_args()
 

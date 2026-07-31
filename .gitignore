@@ -14,9 +14,11 @@ __pycache__/
 .idea/
 .vscode/
 
-# Datasets (do not publish)
+# Datasets (do not publish bulk images/labels)
 data/**
-!data/.gitkeep
+!data/**/
+!data/**/README.md
+!data/**/.gitkeep
 
 # Model weight binaries (place locally after clone)
 *.pth
@@ -26,12 +28,14 @@ data/**
 
 # Training / export / cache outputs (do not publish)
 outputs/**
-!outputs/.gitkeep
+!outputs/**/
+!outputs/**/README.md
+!outputs/**/.gitkeep
 __MACOSX/
 
-# Logs
+# Logs / local
 *.log
-
-# Local env
 .env
 .env.*
+labels.zip
+models.zip

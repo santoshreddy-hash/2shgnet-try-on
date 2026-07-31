@@ -6,27 +6,63 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 
-# Paths — primary training data = ear_pose (YOLO images/ + labels/)
+# ---------------------------------------------------------------------------
+# Paths (repo-relative — no machine-specific absolutes)
+# ---------------------------------------------------------------------------
 DATA_ROOT = ROOT / "data" / "data"
 IBUG_ROOT = DATA_ROOT / "ibug_ears"
 IBUG_CROPS = DATA_ROOT / "ibug_crops"
-EAR_POSE_ROOT = Path(
-    "/Users/santoshreddy/Documents/virtual try on/ear_landmark_live/data/ear_pose"
-)
-# Annotated AudioEar / ear_pose train split (1700 imgs, landmark #56 in .txt)
+EAR_POSE_ROOT = DATA_ROOT / "ear_pose"
+# YOLO layout: images/{train,val} + labels/{train,val}
 DATA_IMAGES = EAR_POSE_ROOT / "images" / "train"
 DATA_LABELS = EAR_POSE_ROOT / "labels" / "train"
-DATA_ANNOTATIONS = DATA_LABELS  # YOLO .txt labels (not sibling .pts)
+DATA_ANNOTATIONS = DATA_LABELS
 DEFAULT_ANNOTATE_DIR = DATA_IMAGES
 DATA_IBUG = IBUG_ROOT
-# Legacy iBUG crop folder (annotator / older runs)
 IBUG_CROP_TRAIN = IBUG_CROPS / "collectiona_train"
+
+# Weights
 PRETRAINED_55 = ROOT / "models" / "shgnet" / "hourglass_2stack_best.pth"
+PRETRAINED_56 = ROOT / "models" / "shgnet" / "SHGNet-56_final.pth"
 YOLO_ONNX = ROOT / "models" / "yolo26n-pose.onnx"
+# Prefer models/yolo/ if top-level stub missing
+YOLO_ONNX_ALT = ROOT / "models" / "yolo" / "yolo26n-pose.onnx"
+
 OUTPUTS = ROOT / "outputs"
 CKPT_DIR = OUTPUTS / "checkpoints"
 ONNX_DIR = OUTPUTS / "onnx"
-ONNX_EXPORT = ONNX_DIR / "SHGNet-56.onnx"
+ONNX_EXPORT = ROOT / "models" / "shgnet" / "SHGNet-56.onnx"
+ONNX_EXPORT_ALT = ONNX_DIR / "SHGNet-56.onnx"
+
+
+def resolve_pretrained_56() -> Path | None:
+    """First real SHGNet-56 .pth (>1 MB; skips path-stub placeholders)."""
+    candidates = (
+        PRETRAINED_56,
+        ROOT / "SHGNet-56_final.pth",
+        CKPT_DIR / "SHGNet-56_final.pth",
+        ROOT / "models" / "shgnet" / "SHGNet-56.pth",
+        CKPT_DIR / "best_stage3.pth",
+        CKPT_DIR / "best_stage2.pth",
+    )
+    for path in candidates:
+        if path.is_file() and path.stat().st_size > 1_000_000:
+            return path
+    return None
+
+
+def resolve_onnx_export() -> Path:
+    for path in (ONNX_EXPORT, ONNX_EXPORT_ALT):
+        if path.is_file() and path.stat().st_size > 1_000_000:
+            return path
+    return ONNX_EXPORT
+
+
+def resolve_yolo_onnx() -> Path:
+    for path in (YOLO_ONNX, YOLO_ONNX_ALT):
+        if path.is_file() and path.stat().st_size > 1_000_000:
+            return path
+    return YOLO_ONNX
 
 # Model I/O
 INPUT_SIZE = 256
@@ -47,12 +83,12 @@ STAGE3_EPOCHS = 15
 STAGE1_LR = 1e-3
 STAGE2_LR = 1e-4
 STAGE3_LR = 1e-5
-BATCH_SIZE = 8
-NUM_WORKERS = 0  # MPS / spawn cannot pickle CUDA/MPS models in Dataset
+BATCH_SIZE = 16
+NUM_WORKERS = 0  # keep 0 for CUDA/MPS DataLoader safety
 VAL_SPLIT = 0.15
 SEED = 42
 
-# Augmentation ranges
+# Online augmentation ranges (random mix per sample)
 AUG_ROTATION_DEG = 15.0
 AUG_SCALE_MIN = 0.9
 AUG_SCALE_MAX = 1.1
@@ -63,21 +99,20 @@ AUG_BLUR_PROB = 0.3
 AUG_FLIP_PROB = 0.5
 
 # Validation
-PCK_THRESHOLDS = (0.02, 0.05, 0.10)  # fraction of crop diagonal
+PCK_THRESHOLDS = (0.02, 0.05, 0.10)
 
-# Temporal smoothing — same One Euro values as ear jewellery virtual try-on
-# (ear_landmark_live/config.py + one_euro_settings.json)
+# Temporal smoothing (One Euro)
 ONE_EURO_MIN_CUTOFF = 1.2
 ONE_EURO_BETA = 0.25
 ONE_EURO_D_CUTOFF = 1.19
-ONE_EURO_REST_SPEED_PX = 0.0  # disable rest freeze (was sticking landmarks)
+ONE_EURO_REST_SPEED_PX = 0.0
 ONE_EURO_REST_HOLD_FRAMES = 3
 ONE_EURO_REST_RELEASE_MULT = 2.0
 ONE_EURO_MAX_STEP_PX = 20.0
 
-# Live FPS (match ear jewellery virtual try-on)
-CAMERA_FPS_MIN = 20  # floor
-CAMERA_FPS_MAX = 30  # ceiling
-CAMERA_FPS = CAMERA_FPS_MAX  # default pace target
+# Live FPS
+CAMERA_FPS_MIN = 20
+CAMERA_FPS_MAX = 30
+CAMERA_FPS = CAMERA_FPS_MAX
 FRAME_WIDTH = 1280
 FRAME_HEIGHT = 720
