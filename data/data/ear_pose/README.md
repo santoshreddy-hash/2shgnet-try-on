@@ -12,5 +12,12 @@ ear_pose/
 
 Label line: `class cx cy w h` + `(x y v) * 56` (normalized 0–1).
 
-Populate from a flat pack by putting train/val images here and extracting
-`labels.zip` into `labels/{train,val}/` (stems must match image names).
+Populate via the wire script (preferred):
+
+```bash
+python scripts/wire_local_dataset.py
+# extracts labels.zip + links local images + SHGNet-56_final.pth
+```
+
+Or manually: put train/val images here and extract `labels.zip` into
+`labels/{train,val}/` (stems must match image names).
