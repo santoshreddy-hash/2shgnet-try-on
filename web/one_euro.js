@@ -1,6 +1,6 @@
 /** One Euro landmarks — steady at rest, tracks ear when head moves. */
 export class OneEuro1D {
-  constructor(minCutoff = 0.8, beta = 0.121, dCutoff = 1.19) {
+  constructor(minCutoff = 1.8, beta = 0.85, dCutoff = 1.19) {
     this.minCutoff = minCutoff;
     this.beta = beta;
     this.dCutoff = dCutoff;
@@ -38,13 +38,13 @@ export class OneEuro1D {
 
 export class OneEuroLandmarks {
   constructor(
-    n = 55,
-    minCutoff = 0.8,
-    beta = 0.121,
+    n = 56,
+    minCutoff = 1.8,
+    beta = 0.85,
     dCutoff = 1.19,
-    restSpeedPx = 5,
-    restHoldFrames = 3,
-    restReleaseMult = 2.0
+    restSpeedPx = 1.5,
+    restHoldFrames = 2,
+    restReleaseMult = 1.5
   ) {
     this.n = n;
     this.minCutoff = minCutoff;
@@ -56,9 +56,33 @@ export class OneEuroLandmarks {
     this.lastOut = null;
     this.restFrames = 0;
     this.restSpeedPx = restSpeedPx;
-    this.restHoldFrames = restHoldFrames;
-    this.restReleaseMult = restReleaseMult;
+    this.restHoldFrames = Math.max(1, Math.floor(restHoldFrames));
+    this.restReleaseMult = Math.max(1.1, Number(restReleaseMult));
     this.frozen = false;
+  }
+
+  /** Apply jewellery / desktop one_euro_settings.json fields. */
+  applySettings(s = {}) {
+    this.setParams({
+      minCutoff: s.min_cutoff ?? s.minCutoff,
+      beta: s.beta,
+      dCutoff: s.d_cutoff ?? s.dCutoff,
+    });
+    if (s.rest_speed_px != null || s.restSpeedPx != null) {
+      this.restSpeedPx = Number(s.rest_speed_px ?? s.restSpeedPx);
+    }
+    if (s.rest_hold_frames != null || s.restHoldFrames != null) {
+      this.restHoldFrames = Math.max(
+        1,
+        Math.floor(Number(s.rest_hold_frames ?? s.restHoldFrames))
+      );
+    }
+    if (s.rest_release_mult != null || s.restReleaseMult != null) {
+      this.restReleaseMult = Math.max(
+        1.1,
+        Number(s.rest_release_mult ?? s.restReleaseMult)
+      );
+    }
   }
 
   setParams({ minCutoff, beta, dCutoff } = {}) {
@@ -172,7 +196,7 @@ export class OneEuroLandmarks {
   }
 
   /** Smooth shape in tip-relative space; output stays locked to tip. */
-  updateRelative(pts, tip, dt, side = null, { maxStepPx = 8, snap = false } = {}) {
+  updateRelative(pts, tip, dt, side = null, { maxStepPx = 42, snap = false } = {}) {
     const tx = tip.x ?? tip[0];
     const ty = tip.y ?? tip[1];
     const rel = pts.map(([x, y]) => [x - tx, y - ty]);

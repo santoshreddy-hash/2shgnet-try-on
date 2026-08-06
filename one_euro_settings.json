@@ -1,9 +1,9 @@
 {
-  "min_cutoff": 1.2,
-  "beta": 0.25,
+  "min_cutoff": 1.8,
+  "beta": 0.85,
   "d_cutoff": 1.19,
-  "rest_speed_px": 0.0,
-  "rest_hold_frames": 3,
-  "rest_release_mult": 2.0,
-  "max_step_px": 20.0
+  "rest_speed_px": 1.5,
+  "rest_hold_frames": 2,
+  "rest_release_mult": 1.5,
+  "max_step_px": 42.0
 }

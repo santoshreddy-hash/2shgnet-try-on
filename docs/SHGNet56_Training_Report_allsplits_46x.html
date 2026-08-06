@@ -1,0 +1,1266 @@
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml" lang="" xml:lang="">
+<head>
+  <meta charset="utf-8" />
+  <meta name="generator" content="pandoc" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes" />
+  <title>SHGNet56_Training_Report_allsplits_46x</title>
+  <style>
+    html {
+      line-height: 1.5;
+      font-family: Georgia, serif;
+      font-size: 20px;
+      color: #1a1a1a;
+      background-color: #fdfdfd;
+    }
+    body {
+      margin: 0 auto;
+      max-width: 36em;
+      padding-left: 50px;
+      padding-right: 50px;
+      padding-top: 50px;
+      padding-bottom: 50px;
+      hyphens: auto;
+      word-wrap: break-word;
+      text-rendering: optimizeLegibility;
+      font-kerning: normal;
+    }
+    @media (max-width: 600px) {
+      body {
+        font-size: 0.9em;
+        padding: 1em;
+      }
+    }
+    @media print {
+      body {
+        background-color: transparent;
+        color: black;
+        font-size: 12pt;
+      }
+      p, h2, h3 {
+        orphans: 3;
+        widows: 3;
+      }
+      h2, h3, h4 {
+        page-break-after: avoid;
+      }
+    }
+    p {
+      margin: 1em 0;
+    }
+    a {
+      color: #1a1a1a;
+    }
+    a:visited {
+      color: #1a1a1a;
+    }
+    img {
+      max-width: 100%;
+    }
+    h1, h2, h3, h4, h5, h6 {
+      margin-top: 1.4em;
+    }
+    h5, h6 {
+      font-size: 1em;
+      font-style: italic;
+    }
+    h6 {
+      font-weight: normal;
+    }
+    ol, ul {
+      padding-left: 1.7em;
+      margin-top: 1em;
+    }
+    li > ol, li > ul {
+      margin-top: 0;
+    }
+    blockquote {
+      margin: 1em 0 1em 1.7em;
+      padding-left: 1em;
+      border-left: 2px solid #e6e6e6;
+      color: #606060;
+    }
+    code {
+      font-family: Menlo, Monaco, 'Lucida Console', Consolas, monospace;
+      font-size: 85%;
+      margin: 0;
+    }
+    pre {
+      margin: 1em 0;
+      overflow: auto;
+    }
+    pre code {
+      padding: 0;
+      overflow: visible;
+    }
+    .sourceCode {
+     background-color: transparent;
+     overflow: visible;
+    }
+    hr {
+      background-color: #1a1a1a;
+      border: none;
+      height: 1px;
+      margin: 1em 0;
+    }
+    table {
+      margin: 1em 0;
+      border-collapse: collapse;
+      width: 100%;
+      overflow-x: auto;
+      display: block;
+      font-variant-numeric: lining-nums tabular-nums;
+    }
+    table caption {
+      margin-bottom: 0.75em;
+    }
+    tbody {
+      margin-top: 0.5em;
+      border-top: 1px solid #1a1a1a;
+      border-bottom: 1px solid #1a1a1a;
+    }
+    th {
+      border-top: 1px solid #1a1a1a;
+      padding: 0.25em 0.5em 0.25em 0.5em;
+    }
+    td {
+      padding: 0.125em 0.5em 0.25em 0.5em;
+    }
+    header {
+      margin-bottom: 4em;
+      text-align: center;
+    }
+    #TOC li {
+      list-style: none;
+    }
+    #TOC a:not(:hover) {
+      text-decoration: none;
+    }
+    code{white-space: pre-wrap;}
+    span.smallcaps{font-variant: small-caps;}
+    span.underline{text-decoration: underline;}
+    div.column{display: inline-block; vertical-align: top; width: 50%;}
+    div.hanging-indent{margin-left: 1.5em; text-indent: -1.5em;}
+    ul.task-list{list-style: none;}
+    pre > code.sourceCode { white-space: pre; position: relative; }
+    pre > code.sourceCode > span { display: inline-block; line-height: 1.25; }
+    pre > code.sourceCode > span:empty { height: 1.2em; }
+    .sourceCode { overflow: visible; }
+    code.sourceCode > span { color: inherit; text-decoration: inherit; }
+    div.sourceCode { margin: 1em 0; }
+    pre.sourceCode { margin: 0; }
+    @media screen {
+    div.sourceCode { overflow: auto; }
+    }
+    @media print {
+    pre > code.sourceCode { white-space: pre-wrap; }
+    pre > code.sourceCode > span { text-indent: -5em; padding-left: 5em; }
+    }
+    pre.numberSource code
+      { counter-reset: source-line 0; }
+    pre.numberSource code > span
+      { position: relative; left: -4em; counter-increment: source-line; }
+    pre.numberSource code > span > a:first-child::before
+      { content: counter(source-line);
+        position: relative; left: -1em; text-align: right; vertical-align: baseline;
+        border: none; display: inline-block;
+        -webkit-touch-callout: none; -webkit-user-select: none;
+        -khtml-user-select: none; -moz-user-select: none;
+        -ms-user-select: none; user-select: none;
+        padding: 0 4px; width: 4em;
+        color: #aaaaaa;
+      }
+    pre.numberSource { margin-left: 3em; border-left: 1px solid #aaaaaa;  padding-left: 4px; }
+    div.sourceCode
+      {   }
+    @media screen {
+    pre > code.sourceCode > span > a:first-child::before { text-decoration: underline; }
+    }
+    code span.al { color: #ff0000; font-weight: bold; } /* Alert */
+    code span.an { color: #60a0b0; font-weight: bold; font-style: italic; } /* Annotation */
+    code span.at { color: #7d9029; } /* Attribute */
+    code span.bn { color: #40a070; } /* BaseN */
+    code span.bu { } /* BuiltIn */
+    code span.cf { color: #007020; font-weight: bold; } /* ControlFlow */
+    code span.ch { color: #4070a0; } /* Char */
+    code span.cn { color: #880000; } /* Constant */
+    code span.co { color: #60a0b0; font-style: italic; } /* Comment */
+    code span.cv { color: #60a0b0; font-weight: bold; font-style: italic; } /* CommentVar */
+    code span.do { color: #ba2121; font-style: italic; } /* Documentation */
+    code span.dt { color: #902000; } /* DataType */
+    code span.dv { color: #40a070; } /* DecVal */
+    code span.er { color: #ff0000; font-weight: bold; } /* Error */
+    code span.ex { } /* Extension */
+    code span.fl { color: #40a070; } /* Float */
+    code span.fu { color: #06287e; } /* Function */
+    code span.im { } /* Import */
+    code span.in { color: #60a0b0; font-weight: bold; font-style: italic; } /* Information */
+    code span.kw { color: #007020; font-weight: bold; } /* Keyword */
+    code span.op { color: #666666; } /* Operator */
+    code span.ot { color: #007020; } /* Other */
+    code span.pp { color: #bc7a00; } /* Preprocessor */
+    code span.sc { color: #4070a0; } /* SpecialChar */
+    code span.ss { color: #bb6688; } /* SpecialString */
+    code span.st { color: #4070a0; } /* String */
+    code span.va { color: #19177c; } /* Variable */
+    code span.vs { color: #4070a0; } /* VerbatimString */
+    code span.wa { color: #60a0b0; font-weight: bold; font-style: italic; } /* Warning */
+    .display.math{display: block; text-align: center; margin: 0.5rem auto;}
+  </style>
+  <!--[if lt IE 9]>
+    <script src="//cdnjs.cloudflare.com/ajax/libs/html5shiv/3.7.3/html5shiv-printshiv.min.js"></script>
+  <![endif]-->
+</head>
+<body>
+<nav id="TOC" role="doc-toc">
+<ul>
+<li><a href="#shgnet-56-training-report">SHGNet-56 Training Report</a>
+<ul>
+<li><a href="#executive-summary">1. Executive summary</a></li>
+<li><a href="#training-command">2. Training command</a></li>
+<li><a href="#dataset">3. Dataset</a>
+<ul>
+<li><a href="#online-augmentation-families-45-additive-variants">Online augmentation families (45 additive variants)</a></li>
+</ul></li>
+<li><a href="#model-and-stages">4. Model and stages</a></li>
+<li><a href="#best-metrics-by-stage">5. Best metrics by stage</a>
+<ul>
+<li><a href="#improvement-vs-stage-1-start">Improvement vs Stage 1 start</a></li>
+</ul></li>
+<li><a href="#per-epoch-logs">6. Per-epoch logs</a>
+<ul>
+<li><a href="#stage-1-heads">Stage 1 (heads)</a></li>
+<li><a href="#stage-2-last-hourglass">Stage 2 (last hourglass)</a></li>
+<li><a href="#stage-3-full-network">Stage 3 (full network)</a></li>
+</ul></li>
+<li><a href="#artifacts">7. Artifacts</a></li>
+<li><a href="#pipeline-diagram">8. Pipeline diagram</a></li>
+<li><a href="#code-entry-points">9. Code entry points</a></li>
+<li><a href="#notes-and-caveats">10. Notes and caveats</a></li>
+<li><a href="#conclusion">11. Conclusion</a></li>
+</ul></li>
+</ul>
+</nav>
+<h1 id="shgnet-56-training-report">SHGNet-56 Training Report</h1>
+<p><strong>Run name:</strong> <code>allsplits_46x_s123</code><br />
+<strong>Generated:</strong> 2026-08-01 21:02<br />
+<strong>Project:</strong> 2shgnet-try-on (ear landmarks + piercing #56)<br />
+<strong>Status:</strong> Training <strong>completed</strong> (stages 1 → 2 → 3)</p>
+<hr />
+<h2 id="executive-summary">1. Executive summary</h2>
+<p>This run fine-tuned a pretrained <strong>SHGNet-56</strong> hourglass on the full ear-pose dataset with <strong>on-the-fly augmentation</strong> (1 original + 45 structured variants = <strong>46 samples per image per epoch</strong>), using a <strong>3-stage</strong> unfreeze schedule.</p>
+<table>
+<thead>
+<tr class="header">
+<th>Metric</th>
+<th>Start (Stage 1 ep1)</th>
+<th>Best Stage 1</th>
+<th>Best Stage 2</th>
+<th>Best Stage 3 (final)</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td>Pierce error (px)</td>
+<td>4.13</td>
+<td>3.98</td>
+<td>1.24</td>
+<td><strong>1.14</strong></td>
+</tr>
+<tr class="even">
+<td>Landmark NME</td>
+<td>0.0148</td>
+<td>0.0143</td>
+<td>0.0051</td>
+<td><strong>0.0048</strong></td>
+</tr>
+<tr class="odd">
+<td>PCK@0.05</td>
+<td>0.979</td>
+<td>0.983</td>
+<td>0.997</td>
+<td><strong>0.998</strong></td>
+</tr>
+<tr class="even">
+<td>Train loss</td>
+<td>0.00065</td>
+<td>—</td>
+<td>—</td>
+<td>0.00005</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Headline result:</strong> piercing localization improved from ~<strong>4.1 px</strong> (Stage 1) to ~<strong>1.14 px</strong> (best Stage 3), with PCK@0.05 ≈ <strong>0.998</strong>.</p>
+<p>Final weights: <code>outputs/checkpoints/SHGNet-56_final.pth</code> (from <code>best_stage3.pth</code>).</p>
+<hr />
+<h2 id="training-command">2. Training command</h2>
+<div class="sourceCode" id="cb1"><pre class="sourceCode powershell"><code class="sourceCode powershell"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="fu">cd</span> <span class="st">&quot;D:\try on proj\2shgnet-try-on&quot;</span></span>
+<span id="cb1-2"><a href="#cb1-2" aria-hidden="true" tabindex="-1"></a><span class="op">.</span>\<span class="op">.</span><span class="fu">venv</span>\Scripts\python<span class="op">.</span><span class="fu">exe</span> <span class="op">-</span>u <span class="op">-</span>m train<span class="op">.</span><span class="fu">train</span> `</span>
+<span id="cb1-3"><a href="#cb1-3" aria-hidden="true" tabindex="-1"></a>  <span class="op">--</span>device cuda `</span>
+<span id="cb1-4"><a href="#cb1-4" aria-hidden="true" tabindex="-1"></a>  <span class="op">--</span>variants<span class="op">-</span>per<span class="op">-</span>image 45 `</span>
+<span id="cb1-5"><a href="#cb1-5" aria-hidden="true" tabindex="-1"></a>  <span class="op">--</span>include<span class="op">-</span>original `</span>
+<span id="cb1-6"><a href="#cb1-6" aria-hidden="true" tabindex="-1"></a>  <span class="op">--</span>all<span class="op">-</span>splits `</span>
+<span id="cb1-7"><a href="#cb1-7" aria-hidden="true" tabindex="-1"></a>  <span class="op">--</span>train<span class="op">-</span>on<span class="op">-</span>all `</span>
+<span id="cb1-8"><a href="#cb1-8" aria-hidden="true" tabindex="-1"></a>  <span class="op">--</span>full<span class="op">-</span>stages `</span>
+<span id="cb1-9"><a href="#cb1-9" aria-hidden="true" tabindex="-1"></a>  <span class="op">--</span>batch<span class="op">-</span>size 16 `</span>
+<span id="cb1-10"><a href="#cb1-10" aria-hidden="true" tabindex="-1"></a>  <span class="op">--</span>run<span class="op">-</span>name allsplits_46x_s123</span></code></pre></div>
+<table>
+<colgroup>
+<col style="width: 42%" />
+<col style="width: 57%" />
+</colgroup>
+<thead>
+<tr class="header">
+<th>Flag</th>
+<th>Effect</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td><code>--device cuda</code></td>
+<td>Train on NVIDIA GPU (RTX 4090)</td>
+</tr>
+<tr class="even">
+<td><code>--variants-per-image 45</code></td>
+<td>On-the-fly additive variants from <code>train/online_variants.py</code></td>
+</tr>
+<tr class="odd">
+<td><code>--include-original</code></td>
+<td>Also train the unaugmented image → <strong>46</strong> samples/image</td>
+</tr>
+<tr class="even">
+<td><code>--all-splits</code></td>
+<td>Pool <code>images/train</code> + <code>images/val</code> (+ <code>test</code> if present)</td>
+</tr>
+<tr class="odd">
+<td><code>--train-on-all</code></td>
+<td>No hold-out from training; val metrics on originals of the full set</td>
+</tr>
+<tr class="even">
+<td><code>--full-stages</code></td>
+<td>Stage 1 (heads) → 2 (last hourglass) → 3 (full net) from SHGNet-56</td>
+</tr>
+<tr class="odd">
+<td><code>--batch-size 16</code></td>
+<td>Mini-batch size</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="dataset">3. Dataset</h2>
+<table>
+<thead>
+<tr class="header">
+<th>Split folder</th>
+<th style="text-align: right;">Annotated images</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td><code>data/data/ear_pose/images/train</code></td>
+<td style="text-align: right;">2,200</td>
+</tr>
+<tr class="even">
+<td><code>data/data/ear_pose/images/val</code></td>
+<td style="text-align: right;">300</td>
+</tr>
+<tr class="odd">
+<td><code>test</code></td>
+<td style="text-align: right;">(none)</td>
+</tr>
+<tr class="even">
+<td><strong>Total</strong></td>
+<td style="text-align: right;"><strong>2,500</strong></td>
+</tr>
+</tbody>
+</table>
+<p><strong>Label format (YOLO-pose):</strong><br />
+<code>class cx cy w h</code> + 56 × <code>(x y v)</code> normalized to [0, 1].<br />
+Piercing is landmark <strong>#56</strong> (0-based index <strong>55</strong>).</p>
+<p><strong>Per-epoch sample count:</strong></p>
+<table>
+<thead>
+<tr class="header">
+<th>Item</th>
+<th style="text-align: right;">Count</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td>Base images</td>
+<td style="text-align: right;">2,500</td>
+</tr>
+<tr class="even">
+<td>Samples / image</td>
+<td style="text-align: right;">46 (1 original + 45 augs)</td>
+</tr>
+<tr class="odd">
+<td>Train set length</td>
+<td style="text-align: right;"><strong>115,000</strong></td>
+</tr>
+<tr class="even">
+<td>Steps / epoch (bs=16)</td>
+<td style="text-align: right;"><strong>7,188</strong></td>
+</tr>
+<tr class="odd">
+<td>Val set (originals only)</td>
+<td style="text-align: right;">2,500</td>
+</tr>
+</tbody>
+</table>
+<h3 id="online-augmentation-families-45-additive-variants">Online augmentation families (45 additive variants)</h3>
+<table>
+<thead>
+<tr class="header">
+<th>Family</th>
+<th style="text-align: right;">Count</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td>Flip</td>
+<td style="text-align: right;">2</td>
+<td>incl. identity / horizontal</td>
+</tr>
+<tr class="even">
+<td>Rotation</td>
+<td style="text-align: right;">7</td>
+<td>≈ ±15°</td>
+</tr>
+<tr class="odd">
+<td>Scale</td>
+<td style="text-align: right;">5</td>
+<td>≈ 0.85–1.15</td>
+</tr>
+<tr class="even">
+<td>Translate</td>
+<td style="text-align: right;">9</td>
+<td>small shifts</td>
+</tr>
+<tr class="odd">
+<td>Brightness</td>
+<td style="text-align: right;">5</td>
+<td></td>
+</tr>
+<tr class="even">
+<td>Contrast</td>
+<td style="text-align: right;">5</td>
+<td></td>
+</tr>
+<tr class="odd">
+<td>Blur</td>
+<td style="text-align: right;">3</td>
+<td>kernels 3/5/7</td>
+</tr>
+<tr class="even">
+<td>Noise / JPEG</td>
+<td style="text-align: right;">4</td>
+<td></td>
+</tr>
+<tr class="odd">
+<td>Occlusion (hair-like)</td>
+<td style="text-align: right;">5</td>
+<td></td>
+</tr>
+<tr class="even">
+<td><strong>Total</strong></td>
+<td style="text-align: right;"><strong>45</strong></td>
+<td>+ original = <strong>46</strong></td>
+</tr>
+</tbody>
+</table>
+<p>Variants are applied <strong>in RAM</strong> (no disk dump). Validation uses <strong>originals only</strong>.</p>
+<hr />
+<h2 id="model-and-stages">4. Model and stages</h2>
+<p><strong>Architecture:</strong> LDNet / stacked hourglass, <strong>2 stacks</strong>, input <strong>256×256</strong>, heatmaps <strong>64×64</strong>, <strong>56</strong> landmark channels.</p>
+<p><strong>Init checkpoint:</strong> <code>models/shgnet/SHGNet-56_final.pth</code> (pretrained before this run).</p>
+<table>
+<thead>
+<tr class="header">
+<th>Stage</th>
+<th>What trains</th>
+<th style="text-align: right;">Epochs</th>
+<th style="text-align: right;">LR</th>
+<th style="text-align: right;">Trainable params (this run)</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td>1</td>
+<td>Heatmap output heads only</td>
+<td style="text-align: right;">30</td>
+<td style="text-align: right;">1e-3</td>
+<td style="text-align: right;">28,784</td>
+</tr>
+<tr class="even">
+<td>2</td>
+<td>Last hourglass + features + heads</td>
+<td style="text-align: right;">20</td>
+<td style="text-align: right;">1e-4</td>
+<td style="text-align: right;">4,019,568</td>
+</tr>
+<tr class="odd">
+<td>3</td>
+<td>Full network</td>
+<td style="text-align: right;">15</td>
+<td style="text-align: right;">1e-5</td>
+<td style="text-align: right;">8,459,888</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Loss:</strong> heatmap MSE (Gaussian targets, σ=2).<br />
+<strong>Best checkpoint selection:</strong> lowest <code>piercing_point_error_px</code> on the val originals set.<br />
+<strong>No early stopping / patience</strong> — fixed epoch counts.</p>
+<p><strong>Hardware:</strong> NVIDIA GeForce RTX 4090 (~24 GB), CUDA; observed ~4.5–5.7 it/s; ~26–30 min per epoch (train + val). Peak VRAM use was modest (~few GB) because the model is small and Stage 1 only trains heads.</p>
+<hr />
+<h2 id="best-metrics-by-stage">5. Best metrics by stage</h2>
+<table>
+<thead>
+<tr class="header">
+<th>Stage</th>
+<th style="text-align: right;">Best ep</th>
+<th style="text-align: right;">Train loss</th>
+<th style="text-align: right;">NME</th>
+<th style="text-align: right;">Pierce px</th>
+<th style="text-align: right;">PCK@0.05</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td>stage1</td>
+<td style="text-align: right;">27</td>
+<td style="text-align: right;">0.000619</td>
+<td style="text-align: right;">0.0143</td>
+<td style="text-align: right;">3.979</td>
+<td style="text-align: right;">0.9827</td>
+</tr>
+<tr class="even">
+<td>stage2</td>
+<td style="text-align: right;">19</td>
+<td style="text-align: right;">0.000074</td>
+<td style="text-align: right;">0.0051</td>
+<td style="text-align: right;">1.242</td>
+<td style="text-align: right;">0.9974</td>
+</tr>
+<tr class="odd">
+<td>stage3</td>
+<td style="text-align: right;">14</td>
+<td style="text-align: right;">0.000046</td>
+<td style="text-align: right;">0.0048</td>
+<td style="text-align: right;">1.144</td>
+<td style="text-align: right;">0.9975</td>
+</tr>
+</tbody>
+</table>
+<h3 id="improvement-vs-stage-1-start">Improvement vs Stage 1 start</h3>
+<ul>
+<li>Pierce px: 4.13 → <strong>1.14</strong> (~72.3% relative reduction)</li>
+<li>NME: 0.0148 → <strong>0.0048</strong></li>
+</ul>
+<hr />
+<h2 id="per-epoch-logs">6. Per-epoch logs</h2>
+<h3 id="stage-1-heads">Stage 1 (heads)</h3>
+<table>
+<thead>
+<tr class="header">
+<th style="text-align: right;">Ep</th>
+<th style="text-align: right;">Train loss</th>
+<th style="text-align: right;">Val HM loss</th>
+<th style="text-align: right;">NME</th>
+<th style="text-align: right;">Pierce px</th>
+<th style="text-align: right;">PCK@0.05</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td style="text-align: right;">1</td>
+<td style="text-align: right;">0.000650</td>
+<td style="text-align: right;">0.000601</td>
+<td style="text-align: right;">0.0148</td>
+<td style="text-align: right;">4.130</td>
+<td style="text-align: right;">0.9790</td>
+</tr>
+<tr class="even">
+<td style="text-align: right;">2</td>
+<td style="text-align: right;">0.000639</td>
+<td style="text-align: right;">0.000599</td>
+<td style="text-align: right;">0.0147</td>
+<td style="text-align: right;">4.179</td>
+<td style="text-align: right;">0.9797</td>
+</tr>
+<tr class="odd">
+<td style="text-align: right;">3</td>
+<td style="text-align: right;">0.000636</td>
+<td style="text-align: right;">0.000591</td>
+<td style="text-align: right;">0.0146</td>
+<td style="text-align: right;">4.130</td>
+<td style="text-align: right;">0.9802</td>
+</tr>
+<tr class="even">
+<td style="text-align: right;">4</td>
+<td style="text-align: right;">0.000633</td>
+<td style="text-align: right;">0.000589</td>
+<td style="text-align: right;">0.0146</td>
+<td style="text-align: right;">4.057</td>
+<td style="text-align: right;">0.9803</td>
+</tr>
+<tr class="odd">
+<td style="text-align: right;">5</td>
+<td style="text-align: right;">0.000631</td>
+<td style="text-align: right;">0.000590</td>
+<td style="text-align: right;">0.0145</td>
+<td style="text-align: right;">4.104</td>
+<td style="text-align: right;">0.9812</td>
+</tr>
+<tr class="even">
+<td style="text-align: right;">6</td>
+<td style="text-align: right;">0.000630</td>
+<td style="text-align: right;">0.000588</td>
+<td style="text-align: right;">0.0145</td>
+<td style="text-align: right;">3.986</td>
+<td style="text-align: right;">0.9811</td>
+</tr>
+<tr class="odd">
+<td style="text-align: right;">7</td>
+<td style="text-align: right;">0.000629</td>
+<td style="text-align: right;">0.000586</td>
+<td style="text-align: right;">0.0145</td>
+<td style="text-align: right;">4.079</td>
+<td style="text-align: right;">0.9814</td>
+</tr>
+<tr class="even">
+<td style="text-align: right;">8</td>
+<td style="text-align: right;">0.000628</td>
+<td style="text-align: right;">0.000583</td>
+<td style="text-align: right;">0.0145</td>
+<td style="text-align: right;">4.080</td>
+<td style="text-align: right;">0.9813</td>
+</tr>
+<tr class="odd">
+<td style="text-align: right;">9</td>
+<td style="text-align: right;">0.000627</td>
+<td style="text-align: right;">0.000581</td>
+<td style="text-align: right;">0.0144</td>
+<td style="text-align: right;">4.006</td>
+<td style="text-align: right;">0.9816</td>
+</tr>
+<tr class="even">
+<td style="text-align: right;">10</td>
+<td style="text-align: right;">0.000626</td>
+<td style="text-align: right;">0.000582</td>
+<td style="text-align: right;">0.0144</td>
+<td style="text-align: right;">4.110</td>
+<td style="text-align: right;">0.9818</td>
+</tr>
+<tr class="odd">
+<td style="text-align: right;">11</td>
+<td style="text-align: right;">0.000626</td>
+<td style="text-align: right;">0.000580</td>
+<td style="text-align: right;">0.0144</td>
+<td style="text-align: right;">4.002</td>
+<td style="text-align: right;">0.9818</td>
+</tr>
+<tr class="even">
+<td style="text-align: right;">12</td>
+<td style="text-align: right;">0.000625</td>
+<td style="text-align: right;">0.000605</td>
+<td style="text-align: right;">0.0144</td>
+<td style="text-align: right;">4.099</td>
+<td style="text-align: right;">0.9816</td>
+</tr>
+<tr class="odd">
+<td style="text-align: right;">13</td>
+<td style="text-align: right;">0.000624</td>
+<td style="text-align: right;">0.000578</td>
+<td style="text-align: right;">0.0144</td>
+<td style="text-align: right;">4.091</td>
+<td style="text-align: right;">0.9815</td>
+</tr>
+<tr class="even">
+<td style="text-align: right;">14</td>
+<td style="text-align: right;">0.000624</td>
+<td style="text-align: right;">0.000581</td>
+<td style="text-align: right;">0.0144</td>
+<td style="text-align: right;">4.050</td>
+<td style="text-align: right;">0.9818</td>
+</tr>
+<tr class="odd">
+<td style="text-align: right;">15</td>
+<td style="text-align: right;">0.000623</td>
+<td style="text-align: right;">0.000579</td>
+<td style="text-align: right;">0.0144</td>
+<td style="text-align: right;">4.074</td>
+<td style="text-align: right;">0.9820</td>
+</tr>
+<tr class="even">
+<td style="text-align: right;">16</td>
+<td style="text-align: right;">0.000623</td>
+<td style="text-align: right;">0.000577</td>
+<td style="text-align: right;">0.0143</td>
+<td style="text-align: right;">4.087</td>
+<td style="text-align: right;">0.9821</td>
+</tr>
+<tr class="odd">
+<td style="text-align: right;">17</td>
+<td style="text-align: right;">0.000623</td>
+<td style="text-align: right;">0.000583</td>
+<td style="text-align: right;">0.0143</td>
+<td style="text-align: right;">4.119</td>
+<td style="text-align: right;">0.9821</td>
+</tr>
+<tr class="even">
+<td style="text-align: right;">18</td>
+<td style="text-align: right;">0.000622</td>
+<td style="text-align: right;">0.000578</td>
+<td style="text-align: right;">0.0143</td>
+<td style="text-align: right;">4.078</td>
+<td style="text-align: right;">0.9824</td>
+</tr>
+<tr class="odd">
+<td style="text-align: right;">19</td>
+<td style="text-align: right;">0.000622</td>
+<td style="text-align: right;">0.000579</td>
+<td style="text-align: right;">0.0143</td>
+<td style="text-align: right;">4.108</td>
+<td style="text-align: right;">0.9824</td>
+</tr>
+<tr class="even">
+<td style="text-align: right;">20</td>
+<td style="text-align: right;">0.000621</td>
+<td style="text-align: right;">0.000583</td>
+<td style="text-align: right;">0.0143</td>
+<td style="text-align: right;">4.058</td>
+<td style="text-align: right;">0.9824</td>
+</tr>
+<tr class="odd">
+<td style="text-align: right;">21</td>
+<td style="text-align: right;">0.000621</td>
+<td style="text-align: right;">0.000578</td>
+<td style="text-align: right;">0.0143</td>
+<td style="text-align: right;">4.068</td>
+<td style="text-align: right;">0.9822</td>
+</tr>
+<tr class="even">
+<td style="text-align: right;">22</td>
+<td style="text-align: right;">0.000621</td>
+<td style="text-align: right;">0.000575</td>
+<td style="text-align: right;">0.0143</td>
+<td style="text-align: right;">3.991</td>
+<td style="text-align: right;">0.9826</td>
+</tr>
+<tr class="odd">
+<td style="text-align: right;">23</td>
+<td style="text-align: right;">0.000621</td>
+<td style="text-align: right;">0.000576</td>
+<td style="text-align: right;">0.0143</td>
+<td style="text-align: right;">4.039</td>
+<td style="text-align: right;">0.9826</td>
+</tr>
+<tr class="even">
+<td style="text-align: right;">24</td>
+<td style="text-align: right;">0.000621</td>
+<td style="text-align: right;">0.000576</td>
+<td style="text-align: right;">0.0143</td>
+<td style="text-align: right;">4.039</td>
+<td style="text-align: right;">0.9827</td>
+</tr>
+<tr class="odd">
+<td style="text-align: right;">25</td>
+<td style="text-align: right;">0.000620</td>
+<td style="text-align: right;">0.000573</td>
+<td style="text-align: right;">0.0142</td>
+<td style="text-align: right;">4.101</td>
+<td style="text-align: right;">0.9826</td>
+</tr>
+<tr class="even">
+<td style="text-align: right;">26</td>
+<td style="text-align: right;">0.000620</td>
+<td style="text-align: right;">0.000571</td>
+<td style="text-align: right;">0.0143</td>
+<td style="text-align: right;">4.059</td>
+<td style="text-align: right;">0.9829</td>
+</tr>
+<tr class="odd">
+<td style="text-align: right;">27</td>
+<td style="text-align: right;">0.000619</td>
+<td style="text-align: right;">0.000576</td>
+<td style="text-align: right;">0.0143</td>
+<td style="text-align: right;">3.979</td>
+<td style="text-align: right;">0.9827</td>
+</tr>
+<tr class="even">
+<td style="text-align: right;">28</td>
+<td style="text-align: right;">0.000619</td>
+<td style="text-align: right;">0.000571</td>
+<td style="text-align: right;">0.0142</td>
+<td style="text-align: right;">4.015</td>
+<td style="text-align: right;">0.9828</td>
+</tr>
+<tr class="odd">
+<td style="text-align: right;">29</td>
+<td style="text-align: right;">0.000619</td>
+<td style="text-align: right;">0.000575</td>
+<td style="text-align: right;">0.0143</td>
+<td style="text-align: right;">4.140</td>
+<td style="text-align: right;">0.9827</td>
+</tr>
+<tr class="even">
+<td style="text-align: right;">30</td>
+<td style="text-align: right;">0.000619</td>
+<td style="text-align: right;">0.000579</td>
+<td style="text-align: right;">0.0143</td>
+<td style="text-align: right;">4.122</td>
+<td style="text-align: right;">0.9825</td>
+</tr>
+</tbody>
+</table>
+<h3 id="stage-2-last-hourglass">Stage 2 (last hourglass)</h3>
+<table>
+<thead>
+<tr class="header">
+<th style="text-align: right;">Ep</th>
+<th style="text-align: right;">Train loss</th>
+<th style="text-align: right;">Val HM loss</th>
+<th style="text-align: right;">NME</th>
+<th style="text-align: right;">Pierce px</th>
+<th style="text-align: right;">PCK@0.05</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td style="text-align: right;">1</td>
+<td style="text-align: right;">0.000441</td>
+<td style="text-align: right;">0.000265</td>
+<td style="text-align: right;">0.0097</td>
+<td style="text-align: right;">2.939</td>
+<td style="text-align: right;">0.9934</td>
+</tr>
+<tr class="even">
+<td style="text-align: right;">2</td>
+<td style="text-align: right;">0.000280</td>
+<td style="text-align: right;">0.000158</td>
+<td style="text-align: right;">0.0077</td>
+<td style="text-align: right;">2.536</td>
+<td style="text-align: right;">0.9951</td>
+</tr>
+<tr class="odd">
+<td style="text-align: right;">3</td>
+<td style="text-align: right;">0.000214</td>
+<td style="text-align: right;">0.000124</td>
+<td style="text-align: right;">0.0069</td>
+<td style="text-align: right;">2.235</td>
+<td style="text-align: right;">0.9959</td>
+</tr>
+<tr class="even">
+<td style="text-align: right;">4</td>
+<td style="text-align: right;">0.000179</td>
+<td style="text-align: right;">0.000102</td>
+<td style="text-align: right;">0.0065</td>
+<td style="text-align: right;">1.996</td>
+<td style="text-align: right;">0.9964</td>
+</tr>
+<tr class="odd">
+<td style="text-align: right;">5</td>
+<td style="text-align: right;">0.000156</td>
+<td style="text-align: right;">0.000084</td>
+<td style="text-align: right;">0.0061</td>
+<td style="text-align: right;">1.765</td>
+<td style="text-align: right;">0.9968</td>
+</tr>
+<tr class="even">
+<td style="text-align: right;">6</td>
+<td style="text-align: right;">0.000139</td>
+<td style="text-align: right;">0.000076</td>
+<td style="text-align: right;">0.0060</td>
+<td style="text-align: right;">1.613</td>
+<td style="text-align: right;">0.9969</td>
+</tr>
+<tr class="odd">
+<td style="text-align: right;">7</td>
+<td style="text-align: right;">0.000128</td>
+<td style="text-align: right;">0.000066</td>
+<td style="text-align: right;">0.0056</td>
+<td style="text-align: right;">1.524</td>
+<td style="text-align: right;">0.9971</td>
+</tr>
+<tr class="even">
+<td style="text-align: right;">8</td>
+<td style="text-align: right;">0.000118</td>
+<td style="text-align: right;">0.000064</td>
+<td style="text-align: right;">0.0057</td>
+<td style="text-align: right;">1.517</td>
+<td style="text-align: right;">0.9970</td>
+</tr>
+<tr class="odd">
+<td style="text-align: right;">9</td>
+<td style="text-align: right;">0.000110</td>
+<td style="text-align: right;">0.000057</td>
+<td style="text-align: right;">0.0055</td>
+<td style="text-align: right;">1.432</td>
+<td style="text-align: right;">0.9972</td>
+</tr>
+<tr class="even">
+<td style="text-align: right;">10</td>
+<td style="text-align: right;">0.000104</td>
+<td style="text-align: right;">0.000055</td>
+<td style="text-align: right;">0.0055</td>
+<td style="text-align: right;">1.389</td>
+<td style="text-align: right;">0.9972</td>
+</tr>
+<tr class="odd">
+<td style="text-align: right;">11</td>
+<td style="text-align: right;">0.000099</td>
+<td style="text-align: right;">0.000055</td>
+<td style="text-align: right;">0.0055</td>
+<td style="text-align: right;">1.454</td>
+<td style="text-align: right;">0.9974</td>
+</tr>
+<tr class="even">
+<td style="text-align: right;">12</td>
+<td style="text-align: right;">0.000094</td>
+<td style="text-align: right;">0.000049</td>
+<td style="text-align: right;">0.0054</td>
+<td style="text-align: right;">1.341</td>
+<td style="text-align: right;">0.9972</td>
+</tr>
+<tr class="odd">
+<td style="text-align: right;">13</td>
+<td style="text-align: right;">0.000090</td>
+<td style="text-align: right;">0.000046</td>
+<td style="text-align: right;">0.0053</td>
+<td style="text-align: right;">1.325</td>
+<td style="text-align: right;">0.9973</td>
+</tr>
+<tr class="even">
+<td style="text-align: right;">14</td>
+<td style="text-align: right;">0.000087</td>
+<td style="text-align: right;">0.000044</td>
+<td style="text-align: right;">0.0052</td>
+<td style="text-align: right;">1.318</td>
+<td style="text-align: right;">0.9974</td>
+</tr>
+<tr class="odd">
+<td style="text-align: right;">15</td>
+<td style="text-align: right;">0.000084</td>
+<td style="text-align: right;">0.000044</td>
+<td style="text-align: right;">0.0053</td>
+<td style="text-align: right;">1.280</td>
+<td style="text-align: right;">0.9974</td>
+</tr>
+<tr class="even">
+<td style="text-align: right;">16</td>
+<td style="text-align: right;">0.000081</td>
+<td style="text-align: right;">0.000042</td>
+<td style="text-align: right;">0.0052</td>
+<td style="text-align: right;">1.272</td>
+<td style="text-align: right;">0.9975</td>
+</tr>
+<tr class="odd">
+<td style="text-align: right;">17</td>
+<td style="text-align: right;">0.000079</td>
+<td style="text-align: right;">0.000041</td>
+<td style="text-align: right;">0.0053</td>
+<td style="text-align: right;">1.295</td>
+<td style="text-align: right;">0.9974</td>
+</tr>
+<tr class="even">
+<td style="text-align: right;">18</td>
+<td style="text-align: right;">0.000076</td>
+<td style="text-align: right;">0.000038</td>
+<td style="text-align: right;">0.0052</td>
+<td style="text-align: right;">1.257</td>
+<td style="text-align: right;">0.9974</td>
+</tr>
+<tr class="odd">
+<td style="text-align: right;">19</td>
+<td style="text-align: right;">0.000074</td>
+<td style="text-align: right;">0.000037</td>
+<td style="text-align: right;">0.0051</td>
+<td style="text-align: right;">1.242</td>
+<td style="text-align: right;">0.9974</td>
+</tr>
+<tr class="even">
+<td style="text-align: right;">20</td>
+<td style="text-align: right;">0.000072</td>
+<td style="text-align: right;">0.000037</td>
+<td style="text-align: right;">0.0049</td>
+<td style="text-align: right;">1.243</td>
+<td style="text-align: right;">0.9979</td>
+</tr>
+</tbody>
+</table>
+<h3 id="stage-3-full-network">Stage 3 (full network)</h3>
+<table>
+<thead>
+<tr class="header">
+<th style="text-align: right;">Ep</th>
+<th style="text-align: right;">Train loss</th>
+<th style="text-align: right;">Val HM loss</th>
+<th style="text-align: right;">NME</th>
+<th style="text-align: right;">Pierce px</th>
+<th style="text-align: right;">PCK@0.05</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td style="text-align: right;">1</td>
+<td style="text-align: right;">0.000060</td>
+<td style="text-align: right;">0.000025</td>
+<td style="text-align: right;">0.0050</td>
+<td style="text-align: right;">1.188</td>
+<td style="text-align: right;">0.9974</td>
+</tr>
+<tr class="even">
+<td style="text-align: right;">2</td>
+<td style="text-align: right;">0.000056</td>
+<td style="text-align: right;">0.000025</td>
+<td style="text-align: right;">0.0049</td>
+<td style="text-align: right;">1.177</td>
+<td style="text-align: right;">0.9975</td>
+</tr>
+<tr class="odd">
+<td style="text-align: right;">3</td>
+<td style="text-align: right;">0.000054</td>
+<td style="text-align: right;">0.000024</td>
+<td style="text-align: right;">0.0049</td>
+<td style="text-align: right;">1.165</td>
+<td style="text-align: right;">0.9974</td>
+</tr>
+<tr class="even">
+<td style="text-align: right;">4</td>
+<td style="text-align: right;">0.000053</td>
+<td style="text-align: right;">0.000023</td>
+<td style="text-align: right;">0.0049</td>
+<td style="text-align: right;">1.161</td>
+<td style="text-align: right;">0.9974</td>
+</tr>
+<tr class="odd">
+<td style="text-align: right;">5</td>
+<td style="text-align: right;">0.000052</td>
+<td style="text-align: right;">0.000023</td>
+<td style="text-align: right;">0.0049</td>
+<td style="text-align: right;">1.153</td>
+<td style="text-align: right;">0.9974</td>
+</tr>
+<tr class="even">
+<td style="text-align: right;">6</td>
+<td style="text-align: right;">0.000051</td>
+<td style="text-align: right;">0.000022</td>
+<td style="text-align: right;">0.0049</td>
+<td style="text-align: right;">1.150</td>
+<td style="text-align: right;">0.9974</td>
+</tr>
+<tr class="odd">
+<td style="text-align: right;">7</td>
+<td style="text-align: right;">0.000050</td>
+<td style="text-align: right;">0.000022</td>
+<td style="text-align: right;">0.0048</td>
+<td style="text-align: right;">1.155</td>
+<td style="text-align: right;">0.9975</td>
+</tr>
+<tr class="even">
+<td style="text-align: right;">8</td>
+<td style="text-align: right;">0.000050</td>
+<td style="text-align: right;">0.000022</td>
+<td style="text-align: right;">0.0049</td>
+<td style="text-align: right;">1.150</td>
+<td style="text-align: right;">0.9974</td>
+</tr>
+<tr class="odd">
+<td style="text-align: right;">9</td>
+<td style="text-align: right;">0.000049</td>
+<td style="text-align: right;">0.000022</td>
+<td style="text-align: right;">0.0049</td>
+<td style="text-align: right;">1.148</td>
+<td style="text-align: right;">0.9975</td>
+</tr>
+<tr class="even">
+<td style="text-align: right;">10</td>
+<td style="text-align: right;">0.000048</td>
+<td style="text-align: right;">0.000021</td>
+<td style="text-align: right;">0.0049</td>
+<td style="text-align: right;">1.152</td>
+<td style="text-align: right;">0.9975</td>
+</tr>
+<tr class="odd">
+<td style="text-align: right;">11</td>
+<td style="text-align: right;">0.000048</td>
+<td style="text-align: right;">0.000021</td>
+<td style="text-align: right;">0.0047</td>
+<td style="text-align: right;">1.149</td>
+<td style="text-align: right;">0.9977</td>
+</tr>
+<tr class="even">
+<td style="text-align: right;">12</td>
+<td style="text-align: right;">0.000047</td>
+<td style="text-align: right;">0.000021</td>
+<td style="text-align: right;">0.0048</td>
+<td style="text-align: right;">1.149</td>
+<td style="text-align: right;">0.9974</td>
+</tr>
+<tr class="odd">
+<td style="text-align: right;">13</td>
+<td style="text-align: right;">0.000047</td>
+<td style="text-align: right;">0.000021</td>
+<td style="text-align: right;">0.0048</td>
+<td style="text-align: right;">1.150</td>
+<td style="text-align: right;">0.9974</td>
+</tr>
+<tr class="even">
+<td style="text-align: right;">14</td>
+<td style="text-align: right;">0.000046</td>
+<td style="text-align: right;">0.000020</td>
+<td style="text-align: right;">0.0048</td>
+<td style="text-align: right;">1.144</td>
+<td style="text-align: right;">0.9975</td>
+</tr>
+<tr class="odd">
+<td style="text-align: right;">15</td>
+<td style="text-align: right;">0.000046</td>
+<td style="text-align: right;">0.000021</td>
+<td style="text-align: right;">0.0049</td>
+<td style="text-align: right;">1.153</td>
+<td style="text-align: right;">0.9974</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="artifacts">7. Artifacts</h2>
+<table>
+<colgroup>
+<col style="width: 26%" />
+<col style="width: 26%" />
+<col style="width: 47%" />
+</colgroup>
+<thead>
+<tr class="header">
+<th>File</th>
+<th>Role</th>
+<th style="text-align: right;">Size (MB)</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td><code>outputs/checkpoints/best_stage1.pth</code></td>
+<td>checkpoint</td>
+<td style="text-align: right;">32.7</td>
+</tr>
+<tr class="even">
+<td><code>outputs/checkpoints/best_stage2.pth</code></td>
+<td>checkpoint</td>
+<td style="text-align: right;">32.7</td>
+</tr>
+<tr class="odd">
+<td><code>outputs/checkpoints/best_stage3.pth</code></td>
+<td>checkpoint</td>
+<td style="text-align: right;">32.7</td>
+</tr>
+<tr class="even">
+<td><code>outputs/checkpoints/SHGNet-56_final.pth</code></td>
+<td>checkpoint</td>
+<td style="text-align: right;">32.7</td>
+</tr>
+<tr class="odd">
+<td><code>outputs/checkpoints/last_stage1.pth</code></td>
+<td>checkpoint</td>
+<td style="text-align: right;">32.7</td>
+</tr>
+<tr class="even">
+<td><code>outputs/checkpoints/last_stage2.pth</code></td>
+<td>checkpoint</td>
+<td style="text-align: right;">32.7</td>
+</tr>
+<tr class="odd">
+<td><code>outputs/checkpoints/last_stage3.pth</code></td>
+<td>checkpoint</td>
+<td style="text-align: right;">32.7</td>
+</tr>
+<tr class="even">
+<td><code>outputs/train_results.json</code></td>
+<td>full history + best dicts</td>
+<td style="text-align: right;">—</td>
+</tr>
+<tr class="odd">
+<td><code>models/shgnet/SHGNet-56_final.pth</code></td>
+<td>(pre-run init; may be overwritten if re-wired)</td>
+<td style="text-align: right;">—</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Recommended for export / live:</strong></p>
+<div class="sourceCode" id="cb2"><pre class="sourceCode powershell"><code class="sourceCode powershell"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a><span class="op">.</span>\<span class="op">.</span><span class="fu">venv</span>\Scripts\python<span class="op">.</span><span class="fu">exe</span> <span class="op">-</span>m train<span class="op">.</span><span class="fu">export_onnx</span> `</span>
+<span id="cb2-2"><a href="#cb2-2" aria-hidden="true" tabindex="-1"></a>  <span class="op">--</span>checkpoint outputs<span class="op">/</span>checkpoints<span class="op">/</span>SHGNet<span class="op">-</span>56_final<span class="op">.</span><span class="fu">pth</span> `</span>
+<span id="cb2-3"><a href="#cb2-3" aria-hidden="true" tabindex="-1"></a>  <span class="op">--</span>out models<span class="op">/</span>shgnet<span class="op">/</span>SHGNet<span class="op">-</span>56<span class="op">.</span><span class="fu">onnx</span></span></code></pre></div>
+<p>Then:</p>
+<div class="sourceCode" id="cb3"><pre class="sourceCode powershell"><code class="sourceCode powershell"><span id="cb3-1"><a href="#cb3-1" aria-hidden="true" tabindex="-1"></a><span class="op">.</span>\<span class="op">.</span><span class="fu">venv</span>\Scripts\python<span class="op">.</span><span class="fu">exe</span> <span class="op">-</span>m live<span class="op">.</span><span class="fu">desktop_onnx</span></span></code></pre></div>
+<hr />
+<h2 id="pipeline-diagram">8. Pipeline diagram</h2>
+<pre><code>Ear crops + YOLO labels (#56)
+        │
+        ▼
+Pool train+val (2,500) ──► Piercing56Dataset
+        │                     1 original + 45 online variants
+        │                     → 115,000 samples / epoch
+        ▼
+Stage 1 (30 ep, lr 1e-3)  heads only
+        ▼
+Stage 2 (20 ep, lr 1e-4)  last hourglass + heads
+        ▼
+Stage 3 (15 ep, lr 1e-5)  full network
+        ▼
+best_stage3.pth → SHGNet-56_final.pth → ONNX → live / web try-on</code></pre>
+<hr />
+<h2 id="code-entry-points">9. Code entry points</h2>
+<table>
+<thead>
+<tr class="header">
+<th>Topic</th>
+<th>Path</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td>Train CLI</td>
+<td><code>train/train.py</code></td>
+</tr>
+<tr class="even">
+<td>Dataset + 46× expansion</td>
+<td><code>train/dataset.py</code></td>
+</tr>
+<tr class="odd">
+<td>Online variants</td>
+<td><code>train/online_variants.py</code></td>
+</tr>
+<tr class="even">
+<td>Config (epochs, LR, paths)</td>
+<td><code>train/config.py</code></td>
+</tr>
+<tr class="odd">
+<td>Freeze / unfreeze stages</td>
+<td><code>train/model.py</code></td>
+</tr>
+<tr class="even">
+<td>Workflow notes</td>
+<td><code>WORKFLOW.md</code></td>
+</tr>
+<tr class="odd">
+<td>Results JSON</td>
+<td><code>outputs/train_results.json</code></td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="notes-and-caveats">10. Notes and caveats</h2>
+<ol type="1">
+<li><strong><code>--train-on-all</code>:</strong> validation metrics are computed on originals of images that also appear in training (with augs). Absolute numbers are optimistic vs a strict held-out test set; relative improvement across stages remains meaningful.</li>
+<li><strong>Stage 1 looked flat</strong> because the network was already strong and only heads were trainable; <strong>Stage 2</strong> delivered the large pierce-error drop.</li>
+<li><strong>No patience / early stop</strong> — all 65 epochs ran to completion.</li>
+<li>Re-running with a larger <code>--batch-size</code> (e.g. 32–64) may improve throughput on the 4090; this run used 16.</li>
+</ol>
+<hr />
+<h2 id="conclusion">11. Conclusion</h2>
+<p>The <code>allsplits_46x_s123</code> run successfully completed 3-stage fine-tuning of SHGNet-56 on 2,500 ear images with 46× on-the-fly sampling. Piercing error improved to <strong>~1.14 px</strong> (best Stage 3) with <strong>PCK@0.05 ≈ 0.998</strong>. Artifacts are ready for ONNX export and live try-on.</p>
+<p><em>Report auto-generated from <code>outputs/train_results.json</code> by <code>scripts/build_training_report.py</code>.</em></p>
+</body>
+</html>

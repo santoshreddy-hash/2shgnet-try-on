@@ -23,6 +23,8 @@ data/**
 # Local Windows asset packs (untracked bulk files break `git stash -u` / checkout)
 dataset annotated/
 datasetr annotated/
+local_assets/
+!local_assets/README.md
 
 # Model weight binaries (place locally after clone)
 *.pth
@@ -43,3 +45,8 @@ __MACOSX/
 .env.*
 labels.zip
 models.zip
+attachments.zip
+attachments/
+
+# Local scratch / screen-recording extracts
+tmp_media/

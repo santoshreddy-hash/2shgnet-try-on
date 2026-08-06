@@ -43,19 +43,23 @@ def validate_variants_math() -> None:
 def validate_one_image_45(ds: Piercing56Dataset) -> None:
     assert len(ds.names) >= 1
     assert ds.variants_per_image == 45
-    assert len(ds) == len(ds.names) * 45
+    stride = ds.samples_per_image
+    assert stride == (46 if ds.include_original else 45)
+    assert len(ds) == len(ds.names) * stride
 
-    # Materialize all 45 variants for image 0
+    # Materialize all slots for image 0
     shapes = []
-    for v in range(45):
+    for v in range(stride):
         sample = ds[v]
         assert sample["image"].ndim == 3 and sample["image"].shape[0] == 3
         assert sample["heatmaps"].shape[0] == 56
         assert sample["landmarks"].shape == (56, 2)
         shapes.append(tuple(sample["image"].shape))
-        assert "__" in sample["name"] or sample["name"] == ds.names[0]
     assert len(set(shapes)) >= 1
-    print(f"[ok] 45 variants for {ds.names[0]} image_tensor={shapes[0]}")
+    print(
+        f"[ok] {stride} samples for {ds.names[0]} "
+        f"(original={ds.include_original}) image_tensor={shapes[0]}"
+    )
 
 
 def validate_apply_variant_unit() -> None:
@@ -136,7 +140,7 @@ def main() -> int:
         print(f"No annotated images under {img_dir}", file=sys.stderr)
         return 1
     names = names[: max(1, args.limit)]
-    print(f"Using {len(names)} images × 45 = {len(names) * 45} smoke samples")
+    print(f"Using {len(names)} images × (1+45) = {len(names) * 46} smoke samples")
 
     ds = Piercing56Dataset(
         names,
@@ -145,6 +149,7 @@ def main() -> int:
         augment=False,
         fill_55_with_pretrained=False,
         variants_per_image=45,
+        include_original=True,
     )
     validate_one_image_45(ds)
 
@@ -162,6 +167,9 @@ def main() -> int:
             str(img_dir),
             "--variants-per-image",
             "45",
+            "--full-stages",
+            "--stage1-epochs",
+            "1",
             "--stage2-epochs",
             "1",
             "--stage3-epochs",

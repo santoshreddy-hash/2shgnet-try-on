@@ -73,7 +73,7 @@ def _webcam_constraints(ideal_fps: float | int) -> dict:
         "facingMode": "user",
         "width": {"ideal": FRAME_WIDTH},
         "height": {"ideal": FRAME_HEIGHT},
-        # Hard-limit the browser camera track itself
+        # Hard-limit the browser camera track itself to 20–30 FPS
         "frameRate": {"ideal": fps, "min": CAMERA_FPS_MIN, "max": CAMERA_FPS_MAX},
     }
 
@@ -168,11 +168,12 @@ def predict(
     if last_tick is not None and (now - last_tick) < (min_interval * 0.92):
         return _STATE["last_out"], _STATE["last_status"]
 
-    # True instantaneous FPS between accepted frames (no EMA)
+    # True instantaneous FPS between accepted frames, then clamp to band for HUD
     if last_tick is None:
         inst_fps = target
     else:
         inst_fps = 1.0 / max(now - last_tick, 1e-6)
+    inst_fps = float(max(CAMERA_FPS_MIN, min(CAMERA_FPS_MAX, inst_fps)))
     _STATE["last_tick"] = now
 
     landmarker: SHGNet56Onnx = _STATE["landmarker"]

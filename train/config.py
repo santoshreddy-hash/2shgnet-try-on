@@ -73,7 +73,8 @@ PIERCING_INDEX = 55  # 0-based → landmark #56
 GAUSSIAN_SIGMA = 2.0
 
 # Crop (jewellery-aligned tip-centered full-ear)
-CROP_PAD = 1.65
+# Live needs ~2.1–2.3× pinna so lobe stays in-frame; 1.65 clipped #56 upward.
+CROP_PAD = 2.15
 EAR_KEYPOINT_MIN_CONF = 0.30
 
 # Training stages
@@ -101,18 +102,22 @@ AUG_FLIP_PROB = 0.5
 # Validation
 PCK_THRESHOLDS = (0.02, 0.05, 0.10)
 
-# Temporal smoothing (One Euro)
-ONE_EURO_MIN_CUTOFF = 1.2
-ONE_EURO_BETA = 0.25
+# Temporal smoothing (One Euro) — stick to ear under head motion
+ONE_EURO_MIN_CUTOFF = 1.8
+ONE_EURO_BETA = 0.85
 ONE_EURO_D_CUTOFF = 1.19
-ONE_EURO_REST_SPEED_PX = 0.0
-ONE_EURO_REST_HOLD_FRAMES = 3
-ONE_EURO_REST_RELEASE_MULT = 2.0
-ONE_EURO_MAX_STEP_PX = 20.0
+ONE_EURO_REST_SPEED_PX = 1.5
+ONE_EURO_REST_HOLD_FRAMES = 2
+ONE_EURO_REST_RELEASE_MULT = 1.5
+ONE_EURO_MAX_STEP_PX = 42.0
 
-# Live FPS
+# Live FPS — hard band for desktop + browser (never outside this range)
 CAMERA_FPS_MIN = 20
 CAMERA_FPS_MAX = 30
-CAMERA_FPS = CAMERA_FPS_MAX
-FRAME_WIDTH = 1280
-FRAME_HEIGHT = 720
+CAMERA_FPS = 25  # default setpoint (mid-band)
+# Capture / process size (aspect preserved; quality default for desktop)
+FRAME_WIDTH = 960
+FRAME_HEIGHT = 540
+# Sparse inference defaults (dense enough for stable lock; tip-hold fills gaps)
+LIVE_YOLO_EVERY = 1
+LIVE_SHG_EVERY = 1

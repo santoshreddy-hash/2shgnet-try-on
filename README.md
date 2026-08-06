@@ -6,31 +6,31 @@ Ear landmark + piercing (#56) pipeline: annotate → train → export ONNX → l
 
 ```
 2shgnet-try-on/
-├── annotator/              # Gradio: click piercing → write landmark #56
-├── train/                  # Dataset, model, train, eval, ONNX, aug export
-├── live/                   # Desktop Gradio / OpenCV ONNX live
-├── tracking/               # One-Euro filter + tip-stick helpers
-├── web/                    # Browser WASM demo (onnxruntime-web)
-├── data/
-│   └── data/
-│       ├── ear_pose/       # ★ primary YOLO-pose dataset
-│       │   ├── images/{train,val}/   # ear crop images (.png/.jpg)
-│       │   └── labels/{train,val}/   # matching .txt (56 keypoints)
-│       └── ibug_crops/     # optional collectiona crops + .pts
+├── annotator/                 # Gradio: click piercing → landmark #56
+├── train/                     # Dataset, model, train, eval, ONNX export
+├── live/                      # Desktop Gradio / OpenCV ONNX live
+├── tracking/                  # One-Euro filter helpers
+├── web/                       # Browser WASM demo
+├── scripts/                   # wire_local_*, smoke_train_*, build_training_report
+├── docs/                      # Training report PDF/MD + pipeline guide
+├── data/data/ear_pose/        # ★ primary YOLO-pose dataset
+│   ├── images/{train,val}/
+│   └── labels/{train,val}/
 ├── models/
 │   ├── shgnet/
-│   │   ├── SHGNet-56_final.pth   # ★ train from this (PyTorch)
-│   │   └── SHGNet-56.onnx        # live / web inference
-│   ├── yolo26n-pose.onnx         # ear tip detector
-│   └── yolo/                     # optional alt YOLO path
+│   │   ├── SHGNet-56_final.pth   # ★ trained PyTorch weights
+│   │   └── SHGNet-56.onnx        # ★ live / web inference
+│   └── yolo/                     # yolo26n-pose.onnx (ear tip)
 ├── outputs/
-│   ├── checkpoints/        # best_stage*.pth, SHGNet-56_final.pth
-│   ├── onnx/               # export copies
-│   └── augmented/          # optional offline aug dump
-├── run_pipeline.py         # annotate | train | export | all
+│   ├── checkpoints/           # best_stage*.pth, SHGNet-56_final.pth
+│   ├── onnx/                  # export copy
+│   ├── logs/                  # train logs (gitignored)
+│   └── train_results.json
+├── local_assets/              # zips, old init .pth, samples (gitignored)
+├── run_pipeline.py
 ├── requirements.txt
-├── WORKFLOW.md             # step-by-step working flow
-└── SHGNet56_Pipeline_Guide.pdf
+├── WORKFLOW.md
+└── one_euro_settings.json
 ```
 
 ## Install
@@ -63,9 +63,9 @@ One command hardlinks/copies into `data/data/ear_pose/` + `models/shgnet/`:
 
 | Source | Expected path |
 |--------|----------------|
-| Images | `dataset annotated\datasetr annotated\images` |
-| Labels | `labels.zip` (repo root) **or** pack `labels/` |
-| Weights | `SHGNet-56_final.pth` (repo root) |
+| Images | ear crops already under `data/data/ear_pose/images/` |
+| Labels | `local_assets/labels.zip` **or** pack `labels/` |
+| Weights | `models/shgnet/SHGNet-56_final.pth` (trained) |
 
 ```powershell
 # Windows (PowerShell, repo root)
@@ -74,9 +74,9 @@ One command hardlinks/copies into `data/data/ear_pose/` + `models/shgnet/`:
 # or any OS:
 python scripts/wire_local_dataset.py
 python scripts/wire_local_dataset.py `
-  --images "dataset annotated/datasetr annotated/images" `
-  --checkpoint SHGNet-56_final.pth `
-  --labels-zip labels.zip
+  --checkpoint models/shgnet/SHGNet-56_final.pth `
+  --labels-zip local_assets/labels.zip `
+  --skip-images
 ```
 
 The script prints a **readiness** summary (`paired` image/label count + checkpoint). Train only when it says `READY`.

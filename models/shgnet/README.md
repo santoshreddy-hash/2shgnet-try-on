@@ -1,8 +1,11 @@
 # Place SHGNet-56 weights here
 
-Required for fine-tune:
-  SHGNet-56_final.pth   (PyTorch, typically ~30 MB+)
+Required / inference:
+  SHGNet-56_final.pth   # trained PyTorch (~34 MB) — synced from outputs/checkpoints after train
+  SHGNet-56.onnx        # live / web (export via: python -m train.export_onnx)
 
-Optional / inference:
-  SHGNet-56.onnx
-  hourglass_2stack_best.pth   (legacy 55-LM only with --from-55)
+Optional:
+  hourglass_2stack_best.pth   # legacy 55-LM only with --from-55
+
+Backup of pre-finetune init (if kept):
+  ../../local_assets/SHGNet-56_pretrained_init.pth

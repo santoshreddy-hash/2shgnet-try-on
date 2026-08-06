@@ -129,20 +129,20 @@ def is_side_profile(
     kp: np.ndarray, side_name: str, tip: Tuple[float, float]
 ) -> bool:
     """
-    Reject strong frontal faces (both ears equally visible).
-    Allow three-quarter views that still show a dominant ear.
+    Reject strong frontal faces and mid-turn (both ears visible).
+    Landmarks must not be drawn while the head is between left/right.
     """
     le, re = kp[3], kp[4]
     lc, rc = float(le[2]), float(re[2])
     if side_name == "LEFT":
-        if lc < 0.30:
+        if lc < 0.35:
             return False
-        if rc >= 0.50 and rc >= lc * 0.85:
+        if rc >= 0.38 and rc >= lc * 0.72:
             return False
     else:
-        if rc < 0.30:
+        if rc < 0.35:
             return False
-        if lc >= 0.50 and lc >= rc * 0.85:
+        if lc >= 0.38 and lc >= rc * 0.72:
             return False
 
     nose = kp[0]
@@ -222,19 +222,42 @@ def landmarks_ok(
     bw, bh = x1 - x0, y1 - y0
     span = max(bw, bh)
     ratio = span / max(1.0, float(side_px))
-    if ratio < 0.4 or ratio > 0.88:
+    if ratio < 0.35 or ratio > 0.92:
         return False
-    if min(bw, bh) < span * 0.28:
+    if min(bw, bh) < span * 0.25:
         return False
     mx, my = float(p[:, 0].mean()), float(p[:, 1].mean())
-    if float(np.hypot(mx - tip[0], my - tip[1])) > float(side_px) * 0.45:
+    if float(np.hypot(mx - tip[0], my - tip[1])) > float(side_px) * 0.50:
         return False
-    pad_x, pad_y = 0.08 * bw, 0.08 * bh
+    pad_x, pad_y = 0.10 * bw, 0.10 * bh
     if tip[0] < x0 - pad_x or tip[0] > x1 + pad_x:
         return False
     if tip[1] < y0 - pad_y or tip[1] > y1 + pad_y:
         return False
+    # Piercing (#56) must sit on the lobe — below the YOLO ear tip.
+    pierce = p[min(55, p.shape[0] - 1)]
+    tip_d = float(np.hypot(pierce[0] - tip[0], pierce[1] - tip[1]))
+    if tip_d < 0.10 * float(side_px) or tip_d > 0.62 * float(side_px):
+        return False
+    if pierce[1] < tip[1] + 0.05 * float(side_px):
+        return False
     return True
+
+
+def pierce_quality(
+    pts: np.ndarray, tip: Tuple[float, float], side_px: float, score: float
+) -> float:
+    """Higher = better lobe placement + heatmap confidence (for flip pick)."""
+    p = np.asarray(pts, dtype=np.float32).reshape(-1, 2)
+    pierce = p[min(55, p.shape[0] - 1)]
+    tip_d = float(np.hypot(pierce[0] - tip[0], pierce[1] - tip[1]))
+    below = max(0.0, float(pierce[1] - tip[1])) / max(1.0, float(side_px))
+    ratio = tip_d / max(1.0, float(side_px))
+    # Ideal tip→pierce ≈ 0.22–0.40 of crop side, clearly below tip
+    ratio_score = 1.0 - min(1.0, abs(ratio - 0.28) / 0.28)
+    below_score = float(np.clip(below / 0.20, 0.0, 1.0))
+    ok_bonus = 1.0 if landmarks_ok(pts, tip, side_px) else 0.0
+    return float(0.45 * score + 0.25 * ratio_score + 0.20 * below_score + 0.10 * ok_bonus)
 
 
 def build_crop_meta(
@@ -246,12 +269,12 @@ def build_crop_meta(
     pad: float = CROP_PAD,
     prev: Optional[CropMeta] = None,
 ) -> CropMeta:
-    """Mostly tip-centered square — light medial so crop stays on ear, not face."""
+    """Mostly tip-centered square — light medial/down so lobe stays in crop."""
     mx, _my = medial_unit(tip, side_name, kp, frame_w)
     side_len = float(pinna * pad)
-    # Small medial/down only — large offset + big pinna was centering on the face
+    # Medial toward face + downward so helix tip isn't the crop center (lobe clipped).
     ncx = tip[0] + mx * (0.10 * pinna)
-    ncy = tip[1] + 0.06 * pinna
+    ncy = tip[1] + 0.17 * pinna
     if prev is None or prev.side_len <= 0:
         cx, cy, sl = ncx, ncy, side_len
     else:
@@ -332,8 +355,9 @@ class EarCropper:
 
         if self._yolo is not None:
             try:
+                # Let ORT/ultralytics pick GPU (DirectML/CUDA) when available.
                 results = self._yolo.predict(
-                    image_bgr, conf=0.25, imgsz=640, verbose=False
+                    image_bgr, conf=0.22, imgsz=640, verbose=False
                 )
                 if results and results[0].keypoints is not None and len(results[0].boxes):
                     r0 = results[0]
@@ -351,30 +375,13 @@ class EarCropper:
 
                     box = boxes[best_i]
                     kp = kpts[best_i]
-                    le = kp[self.LEFT_EAR_IDX]
-                    re = kp[self.RIGHT_EAR_IDX]
-                    if prefer_side == "left":
-                        use_left = True
-                    elif prefer_side == "right":
-                        use_left = False
-                    else:
-                        use_left = float(le[2]) >= float(re[2])
-                    ear = le if use_left else re
-                    if float(ear[2]) >= EAR_KEYPOINT_MIN_CONF:
-                        cand_tip = (float(ear[0]), float(ear[1]))
-                        cand_side = "LEFT" if use_left else "RIGHT"
-                        if is_side_profile(kp, cand_side, cand_tip):
-                            tip = cand_tip
-                            side_name = cand_side
+                    tip, side_name = self._pick_ear(kp, prefer_side)
             except Exception as exc:  # noqa: BLE001
                 print(f"[EarCropper] YOLO crop failed: {exc}")
 
         if tip is None or kp is None or box is None:
-            # Live: never fall back to a face-sized center crop
+            # Live: never sticky-return the old crop — that freezes landmarks on the prior ear
             if not allow_center_fallback:
-                if self._prev is not None:
-                    meta = self._prev
-                    return crop_with_meta(image_bgr, meta), meta
                 return None, None
             side = int(min(h, w))
             x0 = (w - side) // 2
@@ -425,19 +432,45 @@ class EarCropper:
                     best_score, best_i = score, i
             box = boxes[best_i]
             kp = kpts[best_i]
-            le = kp[self.LEFT_EAR_IDX]
-            re = kp[self.RIGHT_EAR_IDX]
-            if prefer_side == "left":
-                use_left = True
-            elif prefer_side == "right":
-                use_left = False
-            else:
-                use_left = float(le[2]) >= float(re[2])
-            ear = le if use_left else re
-            if float(ear[2]) < EAR_KEYPOINT_MIN_CONF:
+            tip, side_name = self._pick_ear(kp, prefer_side)
+            if tip is None:
                 return None
-            tip = (float(ear[0]), float(ear[1]))
-            side_name = "LEFT" if use_left else "RIGHT"
             return tip, side_name, kp, box
         except Exception:
             return None
+
+    def _pick_ear(
+        self,
+        kp: np.ndarray,
+        prefer_side: Optional[str] = None,
+    ) -> Tuple[Optional[Tuple[float, float]], str]:
+        """Pick visible ear; soft prefer_side, switch when the other ear wins."""
+        le, re = kp[self.LEFT_EAR_IDX], kp[self.RIGHT_EAR_IDX]
+        cands: list[Tuple[float, str, Tuple[float, float]]] = []
+        for ear, name in ((le, "LEFT"), (re, "RIGHT")):
+            conf = float(ear[2])
+            if conf < EAR_KEYPOINT_MIN_CONF:
+                continue
+            tip = (float(ear[0]), float(ear[1]))
+            if not is_side_profile(kp, name, tip):
+                continue
+            score = conf
+            if prefer_side and prefer_side.lower() == name.lower():
+                score += 0.08  # light stickiness only
+            cands.append((score, name, tip))
+        if not cands:
+            # Last resort: higher-conf ear even if side-profile gate failed
+            for ear, name in ((le, "LEFT"), (re, "RIGHT")):
+                conf = float(ear[2])
+                if conf < EAR_KEYPOINT_MIN_CONF:
+                    continue
+                tip = (float(ear[0]), float(ear[1]))
+                score = conf
+                if prefer_side and prefer_side.lower() == name.lower():
+                    score += 0.05
+                cands.append((score, name, tip))
+        if not cands:
+            return None, "RIGHT"
+        cands.sort(key=lambda t: t[0], reverse=True)
+        _score, side_name, tip = cands[0]
+        return tip, side_name

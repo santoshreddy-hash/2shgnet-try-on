@@ -46,9 +46,8 @@ python scripts/wire_local_dataset.py
 
 Expects (any subset is wired; missing pieces are reported):
 
-- `.\SHGNet-56_final.pth`
-- `.\dataset annotated\datasetr annotated\images` (optional `labels/`)
-- `.\labels.zip` → extracted to `data/data/ear_pose/labels/{train,val}/`
+- `models/shgnet/SHGNet-56_final.pth` (or `local_assets/SHGNet-56_pretrained_init.pth`)
+- Optional image pack / `local_assets/labels.zip` → `data/data/ear_pose/labels/{train,val}/`
 
 Broken Mac symlink stubs in `models.zip` are ignored; place real `.pth` / `.onnx` files.
 
