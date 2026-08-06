@@ -80,7 +80,9 @@ class SHGNet56Onnx:
 
         avail = set(ort.get_available_providers())
         if providers is None:
+            # Prefer DirectML on Windows (no CUDA 13 DLL hell), then CUDA/CoreML, else CPU.
             preferred = [
+                "DmlExecutionProvider",
                 "CoreMLExecutionProvider",
                 "CUDAExecutionProvider",
                 "CPUExecutionProvider",
@@ -89,6 +91,7 @@ class SHGNet56Onnx:
 
         so = ort.SessionOptions()
         so.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
+        so.intra_op_num_threads = 0  # let EP decide
         try:
             self.session = ort.InferenceSession(
                 str(path), sess_options=so, providers=providers

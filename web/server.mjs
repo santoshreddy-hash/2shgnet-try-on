@@ -1,7 +1,11 @@
 #!/usr/bin/env node
 /**
- * Static server for browser ONNX / WASM demo.
- * Serves ../models/ + this folder. Open http://127.0.0.1:8765
+ * Static server for browser ONNX / WASM demos.
+ *   http://127.0.0.1:8765/           — landmark demo
+ *   http://127.0.0.1:8765/earring/   — earring virtual try-on
+ *
+ * Serves ../models/ + web/ + vendor (onnxruntime-web).
+ * COOP/COEP headers enable SharedArrayBuffer for threaded WASM.
  */
 import http from "node:http";
 import fs from "node:fs";
@@ -22,13 +26,21 @@ const MIME = {
   ".wasm": "application/wasm",
   ".png": "image/png",
   ".jpg": "image/jpeg",
+  ".svg": "image/svg+xml",
   ".data": "application/octet-stream",
 };
 
 function resolveUrl(urlPath) {
-  const clean = decodeURIComponent(urlPath.split("?")[0]);
+  const clean = decodeURIComponent((urlPath || "/").split("?")[0]);
+
+  if (clean === "/earring" || clean === "/earring/") {
+    return path.join(__dirname, "earring", "index.html");
+  }
   if (clean === "/" || clean === "") {
     return path.join(__dirname, "index.html");
+  }
+  if (clean === "/one_euro_settings.json") {
+    return path.join(ROOT, "one_euro_settings.json");
   }
   if (clean.startsWith("/models/")) {
     return path.join(ROOT, clean.slice(1));
@@ -36,12 +48,33 @@ function resolveUrl(urlPath) {
   if (clean.startsWith("/vendor/")) {
     return path.join(__dirname, "node_modules", clean.slice("/vendor/".length));
   }
-  return path.join(__dirname, clean.replace(/^\//, ""));
+  // Directory → index.html
+  const underWeb = path.join(__dirname, clean.replace(/^\//, ""));
+  try {
+    if (fs.existsSync(underWeb) && fs.statSync(underWeb).isDirectory()) {
+      return path.join(underWeb, "index.html");
+    }
+  } catch {
+    /* fall through */
+  }
+  return underWeb;
 }
 
 const server = http.createServer((req, res) => {
+  // Pretty redirect
+  if ((req.url || "").split("?")[0] === "/earring") {
+    res.writeHead(302, { Location: "/earring/" });
+    res.end();
+    return;
+  }
+
   const filePath = resolveUrl(req.url || "/");
-  if (!filePath.startsWith(ROOT) && !filePath.startsWith(__dirname)) {
+  const allowed =
+    filePath.startsWith(ROOT + path.sep) ||
+    filePath.startsWith(__dirname + path.sep) ||
+    filePath === ROOT ||
+    filePath === __dirname;
+  if (!allowed) {
     res.writeHead(403);
     res.end("Forbidden");
     return;
@@ -77,10 +110,9 @@ server.listen(PORT, HOST, () => {
       return "?";
     }
   };
-  console.log(`SHGNet-56 ONNX web (WASM, no Gradio)`);
-  console.log(`  local:   http://127.0.0.1:${PORT}`);
-  console.log(`  network: http://<this-machine-ip>:${PORT}`);
+  console.log(`SHGNet-56 web (WASM)`);
+  console.log(`  landmark demo: http://127.0.0.1:${PORT}/`);
+  console.log(`  earring try-on: http://127.0.0.1:${PORT}/earring/`);
   console.log(`  SHGNet ONNX: ${mb(shg)} MB`);
   console.log(`  YOLO ONNX:   ${mb(yolo)} MB`);
-  console.log(`  + onnxruntime-web WASM (~5–15 MB, cached)`);
 });

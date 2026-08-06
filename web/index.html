@@ -142,13 +142,13 @@
         </div>
         <div class="fps-control">
           <label>
-            <span class="row"><span>Target FPS</span><span class="val" id="fpsTargetVal">30</span></span>
-            <input type="range" id="fpsSlider" min="20" max="30" value="30" step="1" />
+            <span class="row"><span>Target FPS (20–30)</span><span class="val" id="fpsTargetVal">25</span></span>
+            <input type="range" id="fpsSlider" min="20" max="30" value="25" step="1" />
           </label>
         </div>
         <p class="hint">
-          Clear side profile. Models: <code>yolo26n-pose.onnx</code> +
-          <code>SHGNet-56.onnx</code>. Display target 20–30 FPS; inference is sparse + tip-hold.
+          Clear side profile. FPS hard-clamped to <strong>20–30</strong>.
+          YOLO + SHGNet run in <strong>one Web Worker</strong>; tip-hold keeps landmarks glued on the UI thread.
         </p>
         <p id="status">Click Load models…</p>
         <div id="sizes"></div>

@@ -25,6 +25,7 @@ from train.augment import AugmentConfig, augment_sample
 from train.config import (
     DATA_ANNOTATIONS,
     DATA_IMAGES,
+    EAR_POSE_ROOT,
     INPUT_SIZE,
     NUM_LANDMARKS_55,
     NUM_LANDMARKS_56,
@@ -33,6 +34,7 @@ from train.config import (
 )
 from train.crop import EarCropper, remap_points_to_crop
 from train.heatmaps import generate_gaussian_heatmaps
+from train.online_variants import VARIANTS_PER_IMAGE, apply_variant
 from train.shgnet_base import SHGNetEarLandmarker, preprocess_ear_bgr
 from train.yolo_pose_labels import (
     get_piercing_px,
@@ -65,36 +67,34 @@ class Piercing56Dataset(Dataset):
       YOLO ear_pose: resize square ear image → 256, scale all 56 GT landmarks
       iBUG .pts: crop / resize as before
       Build 56 Gaussian heatmaps; optional augment
+
+    When variants_per_image > 0 (typically 45 from online_variants):
+      each image expands to (1 original if include_original else 0) + N on-the-fly
+      variants. Random augment_sample is skipped in that mode.
+
+    Pass either (image_names + img_dir) or image_paths (absolute paths across splits).
     """
 
     def __init__(
         self,
-        image_names: List[str],
+        image_names: Optional[List[str]] = None,
         img_dir: Path = DATA_IMAGES,
         ann_dir: Path = DATA_ANNOTATIONS,
         augment: bool = False,
         cache_dir: Optional[Path] = None,
         fill_55_with_pretrained: bool = True,
         device: str = "cpu",
+        variants_per_image: int = 0,
+        include_original: bool = True,
+        image_paths: Optional[List[Path]] = None,
     ) -> None:
         self.img_dir = Path(img_dir)
         self.ann_dir = Path(ann_dir)
-        self.augment = augment
+        self.variants_per_image = int(variants_per_image)
+        self.include_original = bool(include_original)
+        # Structured online variants replace random augment_sample.
+        self.augment = bool(augment) and self.variants_per_image <= 0
         self.aug_cfg = AugmentConfig()
-        self.mode = "yolo" if is_yolo_pose_images_dir(self.img_dir) else "pts"
-        self.labels_dir = (
-            labels_dir_for_images(self.img_dir) if self.mode == "yolo" else None
-        )
-
-        self.names: List[str] = []
-        for n in image_names:
-            p = self.img_dir / n
-            if self.mode == "yolo":
-                if get_piercing_px(p, self.labels_dir) is not None:
-                    self.names.append(n)
-            elif has_landmark_56(p):
-                self.names.append(n)
-
         self.cropper = EarCropper()
         self.cache_dir = Path(cache_dir) if cache_dir else None
         if self.cache_dir:
@@ -104,8 +104,51 @@ class Piercing56Dataset(Dataset):
         self._landmarker_device = "cpu"
         self.landmarker: Optional[SHGNetEarLandmarker] = None
 
+        paths: List[Path] = []
+        if image_paths is not None:
+            for p in image_paths:
+                p = Path(p)
+                if is_yolo_pose_images_dir(p.parent):
+                    lab = labels_dir_for_images(p.parent)
+                    if get_piercing_px(p, lab) is not None:
+                        paths.append(p)
+                elif has_landmark_56(p):
+                    paths.append(p)
+        else:
+            if image_names is None:
+                raise ValueError("Provide image_names or image_paths")
+            mode = "yolo" if is_yolo_pose_images_dir(self.img_dir) else "pts"
+            labels_dir = (
+                labels_dir_for_images(self.img_dir) if mode == "yolo" else None
+            )
+            for n in image_names:
+                p = self.img_dir / n
+                if mode == "yolo":
+                    if get_piercing_px(p, labels_dir) is not None:
+                        paths.append(p)
+                elif has_landmark_56(p):
+                    paths.append(p)
+
+        self.paths: List[Path] = paths
+        # Display id keeps split folder to avoid train/val name collisions
+        self.names: List[str] = [f"{p.parent.name}/{p.name}" for p in self.paths]
+
+        if self.variants_per_image < 0:
+            raise ValueError("variants_per_image must be >= 0")
+        if self.variants_per_image > VARIANTS_PER_IMAGE:
+            raise ValueError(
+                f"variants_per_image={self.variants_per_image} exceeds "
+                f"online_variants.VARIANTS_PER_IMAGE={VARIANTS_PER_IMAGE}"
+            )
+
+    @property
+    def samples_per_image(self) -> int:
+        if self.variants_per_image <= 0:
+            return 1
+        return (1 if self.include_original else 0) + self.variants_per_image
+
     def __len__(self) -> int:
-        return len(self.names)
+        return len(self.paths) * self.samples_per_image
 
     def _cached_55(self, stem: str) -> Optional[np.ndarray]:
         if not self.cache_dir:
@@ -146,9 +189,12 @@ class Piercing56Dataset(Dataset):
             ]
         return pts
 
-    def _getitem_yolo(self, name: str, image: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
+    def _getitem_yolo(
+        self, img_path: Path, image: np.ndarray
+    ) -> Tuple[np.ndarray, np.ndarray]:
         """Return (crop_256_bgr, landmarks_56 in 256 coords)."""
-        pts_full = _yolo_landmarks_px(self.img_dir / name, self.labels_dir)
+        labels_dir = labels_dir_for_images(img_path.parent)
+        pts_full = _yolo_landmarks_px(img_path, labels_dir)
         h, w = image.shape[:2]
         crop = cv2.resize(image, (INPUT_SIZE, INPUT_SIZE), interpolation=cv2.INTER_LINEAR)
         scale_x = INPUT_SIZE / float(w)
@@ -158,14 +204,15 @@ class Piercing56Dataset(Dataset):
         landmarks[:, 1] = pts_full[:, 1] * scale_y
         if not np.isfinite(landmarks[:NUM_LANDMARKS_55]).all():
             landmarks[:NUM_LANDMARKS_55] = self._fill_55_from_pretrained(
-                crop, Path(name).stem
+                crop, img_path.stem
             )
         if not np.isfinite(landmarks[PIERCING_INDEX]).all():
-            raise ValueError(f"Missing piercing GT for {name}")
+            raise ValueError(f"Missing piercing GT for {img_path}")
         return crop, landmarks
 
-    def _getitem_pts(self, name: str, image: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
-        img_path = self.img_dir / name
+    def _getitem_pts(
+        self, img_path: Path, image: np.ndarray
+    ) -> Tuple[np.ndarray, np.ndarray]:
         ann = load_annotation(pts_path_for(img_path))
         raw = ann["landmarks"]
         already_cropped = img_path.with_suffix(".crop_meta.json").is_file()
@@ -185,7 +232,7 @@ class Piercing56Dataset(Dataset):
                     landmarks[i] = np.nan
             if not np.isfinite(landmarks[:NUM_LANDMARKS_55]).all():
                 landmarks[:NUM_LANDMARKS_55] = self._fill_55_from_pretrained(
-                    crop, Path(name).stem
+                    crop, img_path.stem
                 )
             return crop, landmarks
 
@@ -206,7 +253,7 @@ class Piercing56Dataset(Dataset):
                 flipped=meta.flipped,
             )
         else:
-            pts55_crop = self._fill_55_from_pretrained(crop, Path(name).stem)
+            pts55_crop = self._fill_55_from_pretrained(crop, img_path.stem)
         piercing_crop = remap_points_to_crop(
             piercing_full.reshape(1, 2),
             meta.x0,
@@ -221,18 +268,33 @@ class Piercing56Dataset(Dataset):
         return crop, landmarks
 
     def __getitem__(self, idx: int):
-        name = self.names[idx]
-        img_path = self.img_dir / name
+        stride = self.samples_per_image
+        img_idx = idx // stride
+        slot = idx % stride
+        img_path = self.paths[img_idx]
+        name = self.names[img_idx]
         image = cv2.imread(str(img_path))
         if image is None:
             raise FileNotFoundError(img_path)
 
-        if self.mode == "yolo":
-            crop, landmarks = self._getitem_yolo(name, image)
+        if is_yolo_pose_images_dir(img_path.parent):
+            crop, landmarks = self._getitem_yolo(img_path, image)
         else:
-            crop, landmarks = self._getitem_pts(name, image)
+            crop, landmarks = self._getitem_pts(img_path, image)
 
-        if self.augment:
+        out_name = name
+        if self.variants_per_image > 0:
+            if self.include_original and slot == 0:
+                pass  # original, no aug
+            else:
+                vid = slot - 1 if self.include_original else slot
+                tag, crop, aug_pts = apply_variant(
+                    crop, landmarks, vid, seed=img_idx
+                )
+                if aug_pts is not None:
+                    landmarks = aug_pts.astype(np.float32)
+                out_name = f"{Path(name).stem}__{tag}{Path(name).suffix}"
+        elif self.augment:
             crop, landmarks = augment_sample(crop, landmarks, self.aug_cfg)
 
         heatmaps = generate_gaussian_heatmaps(landmarks)
@@ -242,7 +304,7 @@ class Piercing56Dataset(Dataset):
             "image": tensor,
             "heatmaps": torch.from_numpy(heatmaps),
             "landmarks": torch.from_numpy(landmarks.astype(np.float32)),
-            "name": name,
+            "name": out_name,
         }
 
 
@@ -263,6 +325,25 @@ def discover_annotated(img_dir: Path = DATA_IMAGES, ann_dir: Path = DATA_ANNOTAT
     return names
 
 
+def discover_annotated_all_splits(
+    ear_pose_root: Path = EAR_POSE_ROOT,
+    splits: Tuple[str, ...] = ("train", "val", "test"),
+) -> List[Path]:
+    """Pool annotated YOLO images from images/{train,val,test} (skip missing)."""
+    root = Path(ear_pose_root)
+    images_root = root / "images"
+    out: List[Path] = []
+    for split in splits:
+        d = images_root / split
+        if not d.is_dir():
+            continue
+        labels_dir = labels_dir_for_images(d)
+        for p in list_yolo_pose_images(d):
+            if get_piercing_px(p, labels_dir) is not None:
+                out.append(p)
+    return out
+
+
 def train_val_split(
     names: List[str], val_ratio: float, seed: int
 ) -> Tuple[List[str], List[str]]:
@@ -274,3 +355,16 @@ def train_val_split(
     n_val = max(1, int(round(len(names) * val_ratio)))
     n_val = min(n_val, len(names) - 1)
     return names[n_val:], names[:n_val]
+
+
+def train_val_split_paths(
+    paths: List[Path], val_ratio: float, seed: int
+) -> Tuple[List[Path], List[Path]]:
+    rng = np.random.default_rng(seed)
+    paths = list(paths)
+    rng.shuffle(paths)
+    if len(paths) <= 1:
+        return paths, paths
+    n_val = max(1, int(round(len(paths) * val_ratio)))
+    n_val = min(n_val, len(paths) - 1)
+    return paths[n_val:], paths[:n_val]

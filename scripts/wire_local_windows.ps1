@@ -1,4 +1,4 @@
-# Wire local Windows dataset + SHGNet-56_final.pth + labels.zip into canonical layout.
+# Wire local Windows dataset + SHGNet weights + labels.zip into canonical layout.
 # Run from repo root in PowerShell:
 #
 #   .\scripts\wire_local_windows.ps1
@@ -8,8 +8,8 @@
 
 param(
   [string]$Images = ".\dataset annotated\datasetr annotated",
-  [string]$Checkpoint = ".\SHGNet-56_final.pth",
-  [string]$LabelsZip = ".\labels.zip"
+  [string]$Checkpoint = ".\models\shgnet\SHGNet-56_final.pth",
+  [string]$LabelsZip = ".\local_assets\labels.zip"
 )
 
 $ErrorActionPreference = "Stop"
@@ -17,8 +17,11 @@ Set-Location $PSScriptRoot\..
 
 $py = if (Test-Path .\.venv\Scripts\python.exe) { ".\.venv\Scripts\python.exe" } else { "python" }
 
+if (-not (Test-Path $Checkpoint) -and (Test-Path ".\local_assets\SHGNet-56_pretrained_init.pth")) {
+  $Checkpoint = ".\local_assets\SHGNet-56_pretrained_init.pth"
+}
+
 # $Images may be the pack root (with images/) or the images folder itself
-$packOrImages = $Images
 $imgArg = @()
 if (Test-Path (Join-Path $Images "images")) {
   $imgArg = @("--pack", $Images)

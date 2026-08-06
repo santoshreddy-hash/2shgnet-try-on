@@ -4,8 +4,8 @@
 Sources (auto-detected; override with flags):
   images:  <ROOT>/dataset annotated/datasetr annotated/images
            or --images / --pack
-  labels:  pack/labels  OR  <ROOT>/labels.zip  (train/ + val/)
-  ckpt:    <ROOT>/SHGNet-56_final.pth
+  labels:  pack/labels  OR  local_assets/labels.zip  (train/ + val/)
+  ckpt:    models/shgnet/SHGNet-56_final.pth  OR  local_assets/SHGNet-56_pretrained_init.pth
   yolo:    real .onnx next to repo / under models/ (skips broken Mac symlinks)
 
 Targets:
@@ -17,7 +17,7 @@ Targets:
 
 Examples:
   python scripts/wire_local_dataset.py
-  python scripts/wire_local_dataset.py --images ".../images" --labels-zip labels.zip
+  python scripts/wire_local_dataset.py --images ".../images" --labels-zip local_assets/labels.zip
   python scripts/wire_local_dataset.py --skip-images   # ckpt + labels.zip only
 """
 
@@ -33,8 +33,24 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_PACK = ROOT / "dataset annotated" / "datasetr annotated"
-DEFAULT_CKPT = ROOT / "SHGNet-56_final.pth"
-DEFAULT_LABELS_ZIP = ROOT / "labels.zip"
+_LOCAL = ROOT / "local_assets"
+DEFAULT_CKPT = next(
+    (
+        p
+        for p in (
+            ROOT / "models" / "shgnet" / "SHGNet-56_final.pth",
+            _LOCAL / "SHGNet-56_pretrained_init.pth",
+            ROOT / "SHGNet-56_final.pth",
+        )
+        if p.is_file() and p.stat().st_size > 1_000_000
+    ),
+    ROOT / "models" / "shgnet" / "SHGNet-56_final.pth",
+)
+DEFAULT_LABELS_ZIP = (
+    _LOCAL / "labels.zip"
+    if (_LOCAL / "labels.zip").is_file()
+    else ROOT / "labels.zip"
+)
 EAR_POSE = ROOT / "data" / "data" / "ear_pose"
 MODELS_SHG = ROOT / "models" / "shgnet"
 MODELS_YOLO = ROOT / "models" / "yolo"

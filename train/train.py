@@ -21,6 +21,7 @@ from train.config import (
     BATCH_SIZE,
     CKPT_DIR,
     DATA_IMAGES,
+    EAR_POSE_ROOT,
     NUM_WORKERS,
     OUTPUTS,
     SEED,
@@ -33,7 +34,12 @@ from train.config import (
     VAL_SPLIT,
     resolve_pretrained_56,
 )
-from train.dataset import Piercing56Dataset, discover_annotated, train_val_split
+from train.dataset import (
+    Piercing56Dataset,
+    discover_annotated,
+    discover_annotated_all_splits,
+    train_val_split,
+)
 from train.yolo_pose_labels import labels_dir_for_images
 from train.metrics import (
     decode_heatmaps,
@@ -211,9 +217,42 @@ def main() -> int:
         help="Default: fine-tune SHGNet-56 (stage 2 + 3). Does not expand from 55.",
     )
     p.add_argument(
+        "--full-stages",
+        action="store_true",
+        help="Load SHGNet-56 and run stage 1 (heads) → 2 → 3 (no 55 expand)",
+    )
+    p.add_argument(
         "--from-55",
         action="store_true",
         help="Legacy: expand pretrained 55-LM hourglass → 56, then stages 1–3",
+    )
+    p.add_argument(
+        "--variants-per-image",
+        type=int,
+        default=0,
+        help="On-the-fly additive variants per image (45 = online_variants). "
+        "0 = legacy random augment_sample only.",
+    )
+    p.add_argument(
+        "--include-original",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="With --variants-per-image: also train the unaugmented original "
+        "(default: yes → 1+N samples/image). Use --no-include-original for N only.",
+    )
+    p.add_argument(
+        "--all-splits",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Pool images/train+val+test (default). Use --no-all-splits for a "
+        "single --images-dir with an internal val split.",
+    )
+    p.add_argument(
+        "--train-on-all",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="With --all-splits: train on every image (no holdout). Val metrics "
+        "use originals of all images (default).",
     )
     p.add_argument(
         "--checkpoint",
@@ -261,42 +300,119 @@ def main() -> int:
     except Exception:
         ann_dir = img_dir
 
-    names = discover_annotated(img_dir, ann_dir)
-    if not names:
-        print(
-            "No annotated images found.\n"
-            f"images-dir={img_dir}\n"
-            "1) Run: python annotator/app.py\n"
-            "2) Upload images, click piercing, Save (writes landmark #56)\n"
-            "3) Re-run this trainer.",
-            file=sys.stderr,
-        )
-        return 1
+    variants_n = max(0, int(args.variants_per_image))
+    include_orig = bool(args.include_original)
 
-    train_names, val_names = train_val_split(names, VAL_SPLIT, SEED)
-    print(f"Annotated: {len(names)} | train={len(train_names)} val={len(val_names)}")
-    print(f"Images dir: {img_dir}")
+    train_paths = None
+    val_paths = None
+    train_names = None
+    val_names = None
+
+    if args.all_splits and args.images_dir is None:
+        all_paths = discover_annotated_all_splits(EAR_POSE_ROOT)
+        if not all_paths:
+            print(
+                "No annotated images under "
+                f"{EAR_POSE_ROOT / 'images'}/{{train,val,test}}",
+                file=sys.stderr,
+            )
+            return 1
+        by_split: dict[str, int] = {}
+        for p in all_paths:
+            by_split[p.parent.name] = by_split.get(p.parent.name, 0) + 1
+        print(f"All splits: {dict(sorted(by_split.items()))} total={len(all_paths)}")
+        if args.train_on_all:
+            train_paths = all_paths
+            val_paths = all_paths  # originals-only metrics on full set
+            print(
+                f"Train on ALL {len(train_paths)} images "
+                f"(val metrics = originals of same set)"
+            )
+        else:
+            # Keep official val/test for metrics; train on train only + optional merge
+            train_paths = [p for p in all_paths if p.parent.name == "train"]
+            val_paths = [p for p in all_paths if p.parent.name in ("val", "test")]
+            if not train_paths:
+                train_paths = all_paths
+            if not val_paths:
+                from train.dataset import train_val_split_paths
+
+                train_paths, val_paths = train_val_split_paths(
+                    all_paths, VAL_SPLIT, SEED
+                )
+            print(
+                f"Train paths={len(train_paths)} | val/test paths={len(val_paths)}"
+            )
+    else:
+        names = discover_annotated(img_dir, ann_dir)
+        if not names:
+            print(
+                "No annotated images found.\n"
+                f"images-dir={img_dir}\n"
+                "1) Run: python annotator/app.py\n"
+                "2) Upload images, click piercing, Save (writes landmark #56)\n"
+                "3) Re-run this trainer.",
+                file=sys.stderr,
+            )
+            return 1
+        train_names, val_names = train_val_split(names, VAL_SPLIT, SEED)
+        print(
+            f"Annotated: {len(names)} | train={len(train_names)} val={len(val_names)}"
+        )
+
+    print(f"Images dir: {img_dir if not args.all_splits else EAR_POSE_ROOT / 'images'}")
     print(f"Ckpt dir: {ckpt_dir}")
     print(f"Device: {device}")
 
-    train_ds = Piercing56Dataset(
-        train_names,
-        img_dir=img_dir,
-        ann_dir=ann_dir,
-        augment=True,
-        cache_dir=cache_dir,
-        fill_55_with_pretrained=False,
-        device="cpu",
-    )
-    val_ds = Piercing56Dataset(
-        val_names,
-        img_dir=img_dir,
-        ann_dir=ann_dir,
-        augment=False,
-        cache_dir=cache_dir,
-        fill_55_with_pretrained=False,
-        device="cpu",
-    )
+    if train_paths is not None:
+        train_ds = Piercing56Dataset(
+            image_paths=train_paths,
+            augment=variants_n <= 0,
+            cache_dir=cache_dir,
+            fill_55_with_pretrained=False,
+            device="cpu",
+            variants_per_image=variants_n,
+            include_original=include_orig,
+        )
+        val_ds = Piercing56Dataset(
+            image_paths=val_paths,
+            augment=False,
+            cache_dir=cache_dir,
+            fill_55_with_pretrained=False,
+            device="cpu",
+            variants_per_image=0,
+            include_original=True,
+        )
+    else:
+        train_ds = Piercing56Dataset(
+            train_names,
+            img_dir=img_dir,
+            ann_dir=ann_dir,
+            augment=variants_n <= 0,
+            cache_dir=cache_dir,
+            fill_55_with_pretrained=False,
+            device="cpu",
+            variants_per_image=variants_n,
+            include_original=include_orig,
+        )
+        val_ds = Piercing56Dataset(
+            val_names,
+            img_dir=img_dir,
+            ann_dir=ann_dir,
+            augment=False,
+            cache_dir=cache_dir,
+            fill_55_with_pretrained=False,
+            device="cpu",
+            variants_per_image=0,
+            include_original=True,
+        )
+    if variants_n > 0:
+        print(
+            f"Online variants: {variants_n}/image"
+            f"{' + original' if include_orig else ''} "
+            f"→ {train_ds.samples_per_image} samples/image | "
+            f"train_len={len(train_ds)} val_len={len(val_ds)}"
+        )
     train_loader = DataLoader(
         train_ds,
         batch_size=min(args.batch_size, max(1, len(train_ds))),
@@ -315,10 +431,19 @@ def main() -> int:
     results = {}
 
     use_from_55 = bool(args.from_55)
-    use_from_stage2 = bool(args.from_stage2) and not use_from_55 and not args.stage3_only
+    use_full_stages = bool(args.full_stages) and not use_from_55 and not args.stage3_only
+    use_from_stage2 = (
+        bool(args.from_stage2)
+        and not use_from_55
+        and not args.stage3_only
+        and not use_full_stages
+    )
 
     if args.stage3_only and use_from_55:
         print("Use only one of --stage3-only / --from-55", file=sys.stderr)
+        return 1
+    if args.full_stages and use_from_55:
+        print("Use only one of --full-stages / --from-55", file=sys.stderr)
         return 1
 
     def _resolve_56_ckpt() -> Path | None:
@@ -350,6 +475,37 @@ def main() -> int:
             model, train_loader, val_loader, device,
             args.stage3_epochs, STAGE3_LR, "stage3", ckpt_dir,
         )
+    elif use_full_stages:
+        ckpt_path = _resolve_56_ckpt()
+        if ckpt_path is None:
+            print(
+                "Need a real SHGNet-56 .pth for --full-stages.\n"
+                "Place at models/shgnet/SHGNet-56_final.pth\n"
+                "or pass --checkpoint path",
+                file=sys.stderr,
+            )
+            return 1
+        model, meta = load_checkpoint_into_56(ckpt_path, device)
+        print(f"Full stages 1→2→3 from SHGNet-56 {ckpt_path}")
+        unfreeze_final_layer(model)
+        print(f"Stage 1 trainable params: {trainable_param_count(model):,}")
+        results["stage1"] = run_stage(
+            model, train_loader, val_loader, device,
+            args.stage1_epochs, STAGE1_LR, "stage1", ckpt_dir,
+        )
+        unfreeze_last_hourglass(model)
+        print(f"Stage 2 trainable params: {trainable_param_count(model):,}")
+        results["stage2"] = run_stage(
+            model, train_loader, val_loader, device,
+            args.stage2_epochs, STAGE2_LR, "stage2", ckpt_dir,
+        )
+        if not args.skip_stage3:
+            unfreeze_all(model)
+            print(f"Stage 3 trainable params: {trainable_param_count(model):,}")
+            results["stage3"] = run_stage(
+                model, train_loader, val_loader, device,
+                args.stage3_epochs, STAGE3_LR, "stage3", ckpt_dir,
+            )
     elif use_from_stage2:
         ckpt_path = _resolve_56_ckpt()
         if ckpt_path is None:
@@ -417,12 +573,20 @@ def main() -> int:
         print(f"Final export weights from {best1}")
 
     final_path = ckpt_dir / "SHGNet-56_final.pth"
+    n_imgs = len(train_ds.paths)
     payload = {
         "model_state_dict": model.state_dict(),
         "arch": meta["arch"],
         "results": results,
-        "images_dir": str(img_dir),
-        "n_annotated": len(names),
+        "images_dir": str(
+            EAR_POSE_ROOT / "images" if args.all_splits and args.images_dir is None else img_dir
+        ),
+        "n_annotated": n_imgs,
+        "samples_per_image": train_ds.samples_per_image,
+        "variants_per_image": variants_n,
+        "include_original": include_orig,
+        "all_splits": bool(args.all_splits and args.images_dir is None),
+        "train_on_all": bool(args.train_on_all),
     }
     if args.run_name:
         payload["run_name"] = args.run_name

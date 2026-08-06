@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>EARRING Try On</title>
+  <link rel="stylesheet" href="./styles.css" />
+</head>
+<body>
+  <!-- Splash -->
+  <section id="splash" class="screen active" aria-label="Splash">
+    <div class="hero-plane" aria-hidden="true"></div>
+    <div class="splash-inner">
+      <h1 class="brand">EARRING<span>Try On</span></h1>
+      <p class="splash-copy">
+        Upload your earring photo, then try it on live.
+        The stud locks to your piercing — drag the dangling part to swing it.
+      </p>
+      <div class="actions">
+        <button class="cta" id="enterStudio" type="button">Enter studio</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- Upload / product -->
+  <section id="product" class="screen" aria-label="Upload earring">
+    <div class="topbar">
+      <div class="mark">EARRING Try On</div>
+      <a href="#splash" id="backSplash">Back</a>
+    </div>
+    <div class="product-grid">
+      <div class="stage-card upload-stage" id="dropZone">
+        <canvas id="previewSprite" width="160" height="200" aria-hidden="true"></canvas>
+        <p class="upload-hint" id="uploadHint">Drop an earring image here<br>or click to browse</p>
+        <input type="file" id="earFile" accept="image/*" hidden />
+      </div>
+      <div class="product-info">
+        <h2 id="prodName">Your earring</h2>
+        <p class="blurb" id="prodBlurb">
+          Use a PNG with transparent background, or a product shot on white.
+          The top of the image is treated as the stud.
+        </p>
+        <div class="actions">
+          <button class="cta" id="pickFileBtn" type="button">Upload image</button>
+          <button class="cta" id="tryOnBtn" type="button">TRY ON</button>
+          <button class="cta ghost" id="toSplashFromProduct" type="button" style="color:var(--ink);border-color:var(--line)">Back</button>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Studio -->
+  <section id="studio" class="screen" aria-label="Studio">
+    <header class="studio-bar">
+      <div class="mark">EARRING Try On</div>
+      <button class="primary" id="loadModels" type="button">Load models</button>
+      <button class="primary" id="startCam" type="button" disabled>Start camera</button>
+      <button class="stop" id="stopCam" type="button" disabled>Stop</button>
+      <button class="soft" id="backProduct" type="button">Upload</button>
+      <button class="soft" id="studioUploadBtn" type="button">Change image</button>
+      <input type="file" id="studioEarFile" accept="image/*" hidden />
+      <div class="controls">
+        <div class="seg" role="group" aria-label="Swing mode">
+          <button type="button" data-mode="classic" class="active" id="modeClassic">Classic</button>
+          <button type="button" data-mode="subtle" id="modeSubtle">Subtle</button>
+        </div>
+        <label>
+          Freedom
+          <input type="range" id="freedom" min="0" max="1" step="0.01" value="0.7" />
+          <span id="freedomVal">0.70</span>
+        </label>
+      </div>
+    </header>
+    <div class="studio-main">
+      <div class="viewport">
+        <video id="video" playsinline muted></video>
+        <canvas id="out" width="640" height="480"></canvas>
+      </div>
+      <aside class="side-panel">
+        <h3 id="studioProdName">Your earring</h3>
+        <p class="hint">
+          Side-profile of one ear. Drag the dangling part to swing it —
+          it follows your finger, then settles with physics.
+        </p>
+        <p id="status">Click Load models…</p>
+      </aside>
+    </div>
+  </section>
+
+  <script type="module" src="./app.js"></script>
+</body>
+</html>
