@@ -13,7 +13,13 @@ from typing import Optional, Tuple
 import cv2
 import numpy as np
 
-from train.config import CROP_PAD, EAR_KEYPOINT_MIN_CONF, INPUT_SIZE, YOLO_ONNX
+from train.config import (
+    CROP_PAD,
+    EAR_KEYPOINT_MIN_CONF,
+    INPUT_SIZE,
+    resolve_yolo_device,
+    resolve_yolo_weights,
+)
 
 
 @dataclass
@@ -129,29 +135,47 @@ def is_side_profile(
     kp: np.ndarray, side_name: str, tip: Tuple[float, float]
 ) -> bool:
     """
-    Reject strong frontal faces and mid-turn (both ears visible).
-    Landmarks must not be drawn while the head is between left/right.
+    Accept a usable single-ear view; reject weak tips and near-frontal transitions
+    so landmarks are not dragged across the face during L↔R turns.
     """
     le, re = kp[3], kp[4]
     lc, rc = float(le[2]), float(re[2])
     if side_name == "LEFT":
-        if lc < 0.35:
+        if lc < EAR_KEYPOINT_MIN_CONF:
             return False
-        if rc >= 0.38 and rc >= lc * 0.72:
+        # Other ear also strong → frontal / turning
+        if rc >= 0.35 and rc >= lc * 0.7:
             return False
+        ear = le
     else:
-        if rc < 0.35:
+        if rc < EAR_KEYPOINT_MIN_CONF:
             return False
-        if lc >= 0.38 and lc >= rc * 0.72:
+        if lc >= 0.35 and lc >= rc * 0.7:
             return False
-
+        ear = re
     nose = kp[0]
     if float(nose[2]) >= 0.2:
-        dx = abs(float(tip[0]) - float(nose[0]))
-        d = float(np.hypot(tip[0] - nose[0], tip[1] - nose[1]))
-        if dx < 22.0 or d < 28.0:
+        dx = abs(float(ear[0]) - float(nose[0]))
+        d = float(np.hypot(float(ear[0]) - float(nose[0]), float(ear[1]) - float(nose[1])))
+        if dx < 28.0 or d < 36.0:
+            return False
+        if dx < d * 0.55:
             return False
     return True
+
+
+def ear_visibility_score(kp: np.ndarray, side_name: str) -> float:
+    """0–1 preference for how usable this ear tip looks (conf + lateral offset)."""
+    le, re = kp[3], kp[4]
+    ear = le if side_name == "LEFT" else re
+    conf = float(ear[2])
+    nose = kp[0]
+    lateral = 0.5
+    if float(nose[2]) >= 0.15:
+        dx = abs(float(ear[0]) - float(nose[0]))
+        # Prefer ears that aren't on top of the nose (true frontal)
+        lateral = float(np.clip(dx / 40.0, 0.0, 1.0))
+    return float(0.75 * conf + 0.25 * lateral)
 
 
 def estimate_pinna_h(
@@ -167,28 +191,31 @@ def estimate_pinna_h(
     nose = kp[0]
     if float(nose[2]) >= 0.2:
         tip_nose = float(np.hypot(tip_x - nose[0], tip_y - nose[1]))
-        if tip_nose > fmin * 0.03:
-            # Dominant cue on side profile — ear ≈ 0.5–0.6 of tip–nose
-            cands.append(tip_nose * 0.55)
+        if tip_nose > fmin * 0.04:
+            # Side / three-quarter: ear ≈ 0.5–0.65 of tip–nose
+            cands.append(tip_nose * 0.58)
 
     le, re = kp[1], kp[2]  # eyes
     if float(le[2]) > 0.2 and float(re[2]) > 0.2:
         iod = float(np.hypot(le[0] - re[0], le[1] - re[1]))
         if iod > fmin * 0.02:
-            cands.append(iod * 0.90)
+            cands.append(iod * 1.05)
 
     bh = float(box[3] - box[1])
+    bw = float(box[2] - box[0])
     if bh > 1:
-        cands.append(bh * 0.12)
+        cands.append(bh * 0.14)
+    if bw > 1:
+        cands.append(bw * 0.22)
 
     if not cands:
-        return float(max(40.0, fmin * 0.12))
+        return float(max(48.0, fmin * 0.14))
 
     pinna = float(np.median(cands))
-    # Never let IOD/body cues inflate past tip–nose scale
-    if tip_nose is not None and tip_nose > 1:
-        pinna = min(pinna, tip_nose * 0.70)
-    return float(np.clip(pinna, 40.0, 0.20 * fmin))
+    # Only cap by tip–nose when that cue is trustworthy (not near-frontal)
+    if tip_nose is not None and tip_nose > fmin * 0.06:
+        pinna = min(pinna, tip_nose * 0.75)
+    return float(np.clip(pinna, 48.0, 0.28 * fmin))
 
 
 def medial_unit(
@@ -222,24 +249,26 @@ def landmarks_ok(
     bw, bh = x1 - x0, y1 - y0
     span = max(bw, bh)
     ratio = span / max(1.0, float(side_px))
-    if ratio < 0.35 or ratio > 0.92:
+    # Wider band for three-quarter crops (pinna foreshortening)
+    if ratio < 0.28 or ratio > 0.98:
         return False
-    if min(bw, bh) < span * 0.25:
+    if min(bw, bh) < span * 0.18:
         return False
     mx, my = float(p[:, 0].mean()), float(p[:, 1].mean())
-    if float(np.hypot(mx - tip[0], my - tip[1])) > float(side_px) * 0.50:
+    if float(np.hypot(mx - tip[0], my - tip[1])) > float(side_px) * 0.58:
         return False
-    pad_x, pad_y = 0.10 * bw, 0.10 * bh
+    pad_x, pad_y = 0.15 * bw, 0.15 * bh
     if tip[0] < x0 - pad_x or tip[0] > x1 + pad_x:
         return False
     if tip[1] < y0 - pad_y or tip[1] > y1 + pad_y:
         return False
-    # Piercing (#56) must sit on the lobe — below the YOLO ear tip.
+    # Piercing (#56) should sit on/near the lobe — below tip when possible.
     pierce = p[min(55, p.shape[0] - 1)]
     tip_d = float(np.hypot(pierce[0] - tip[0], pierce[1] - tip[1]))
-    if tip_d < 0.10 * float(side_px) or tip_d > 0.62 * float(side_px):
+    if tip_d < 0.06 * float(side_px) or tip_d > 0.72 * float(side_px):
         return False
-    if pierce[1] < tip[1] + 0.05 * float(side_px):
+    # Soft: allow slight above-tip for angled views; hard-reject only if far above
+    if pierce[1] < tip[1] - 0.08 * float(side_px):
         return False
     return True
 
@@ -325,20 +354,40 @@ class EarCropper:
     LEFT_EAR_IDX = 3
     RIGHT_EAR_IDX = 4
 
-    def __init__(self, yolo_path: Path | str | None = YOLO_ONNX) -> None:
+    def __init__(
+        self,
+        yolo_path: Path | str | None = None,
+        *,
+        device: str | None = None,
+        imgsz: int = 640,
+        conf: float = 0.12,
+    ) -> None:
         self._yolo = None
         self._prev: Optional[CropMeta] = None
-        path = Path(yolo_path) if yolo_path else None
+        self.device = device or resolve_yolo_device()
+        self.imgsz = int(imgsz)
+        self.conf = float(conf)
+        self._is_pt = False
+        path = Path(yolo_path) if yolo_path else resolve_yolo_weights(prefer_pt=True)
         if path and path.is_file():
             try:
                 from ultralytics import YOLO
 
                 self._yolo = YOLO(str(path), task="pose")
+                self._is_pt = path.suffix.lower() == ".pt"
+                print(f"[EarCropper] {path.name} device={self.device} imgsz={self.imgsz}")
             except Exception as exc:  # noqa: BLE001
                 print(f"[EarCropper] YOLO unavailable ({exc}); using center crop fallback")
 
     def reset(self) -> None:
         self._prev = None
+
+    def _predict(self, image_bgr: np.ndarray):
+        assert self._yolo is not None
+        kwargs: dict = {"conf": self.conf, "imgsz": self.imgsz, "verbose": False}
+        if self._is_pt:
+            kwargs["device"] = self.device
+        return self._yolo.predict(image_bgr, **kwargs)
 
     def crop(
         self,
@@ -355,10 +404,8 @@ class EarCropper:
 
         if self._yolo is not None:
             try:
-                # Let ORT/ultralytics pick GPU (DirectML/CUDA) when available.
-                results = self._yolo.predict(
-                    image_bgr, conf=0.22, imgsz=640, verbose=False
-                )
+                # Low conf so partial / three-quarter ears still produce keypoints
+                results = self._predict(image_bgr)
                 if results and results[0].keypoints is not None and len(results[0].boxes):
                     r0 = results[0]
                     boxes = r0.boxes.xyxy.cpu().numpy()
@@ -369,19 +416,44 @@ class EarCropper:
                     for i in range(len(boxes)):
                         le_c = float(kpts[i][self.LEFT_EAR_IDX][2])
                         re_c = float(kpts[i][self.RIGHT_EAR_IDX][2])
-                        score = max(le_c, re_c) * 0.7 + float(confs[i]) * 0.3
+                        # Prefer the detection with the stronger ear keypoint
+                        score = max(le_c, re_c) * 0.85 + float(confs[i]) * 0.15
                         if score > best_score:
                             best_score, best_i = score, i
 
                     box = boxes[best_i]
                     kp = kpts[best_i]
-                    tip, side_name = self._pick_ear(kp, prefer_side)
+                    le = kp[self.LEFT_EAR_IDX]
+                    re = kp[self.RIGHT_EAR_IDX]
+
+                    # Rank candidate ears; honor prefer_side as a soft boost
+                    candidates: list[tuple[float, str, tuple[float, float]]] = []
+                    for use_left, ear in ((True, le), (False, re)):
+                        if float(ear[2]) < EAR_KEYPOINT_MIN_CONF:
+                            continue
+                        cand_side = "LEFT" if use_left else "RIGHT"
+                        cand_tip = (float(ear[0]), float(ear[1]))
+                        if not is_side_profile(kp, cand_side, cand_tip):
+                            continue
+                        vis = ear_visibility_score(kp, cand_side)
+                        if prefer_side == "left" and use_left:
+                            vis += 0.15
+                        elif prefer_side == "right" and not use_left:
+                            vis += 0.15
+                        candidates.append((vis, cand_side, cand_tip))
+
+                    if candidates:
+                        candidates.sort(key=lambda t: t[0], reverse=True)
+                        _, side_name, tip = candidates[0]
             except Exception as exc:  # noqa: BLE001
                 print(f"[EarCropper] YOLO crop failed: {exc}")
 
         if tip is None or kp is None or box is None:
-            # Live: never sticky-return the old crop — that freezes landmarks on the prior ear
+            # Live: never fall back to a face-sized center crop
             if not allow_center_fallback:
+                if self._prev is not None:
+                    meta = self._prev
+                    return crop_with_meta(image_bgr, meta), meta
                 return None, None
             side = int(min(h, w))
             x0 = (w - side) // 2
@@ -414,9 +486,7 @@ class EarCropper:
         if self._yolo is None:
             return None
         try:
-            results = self._yolo.predict(
-                image_bgr, conf=0.20, imgsz=640, verbose=False
-            )
+            results = self._predict(image_bgr)
             if not (results and results[0].keypoints is not None and len(results[0].boxes)):
                 return None
             r0 = results[0]
@@ -427,50 +497,31 @@ class EarCropper:
             for i in range(len(boxes)):
                 le_c = float(kpts[i][self.LEFT_EAR_IDX][2])
                 re_c = float(kpts[i][self.RIGHT_EAR_IDX][2])
-                score = max(le_c, re_c) * 0.7 + float(confs[i]) * 0.3
+                score = max(le_c, re_c) * 0.85 + float(confs[i]) * 0.15
                 if score > best_score:
                     best_score, best_i = score, i
             box = boxes[best_i]
             kp = kpts[best_i]
-            tip, side_name = self._pick_ear(kp, prefer_side)
-            if tip is None:
+            le = kp[self.LEFT_EAR_IDX]
+            re = kp[self.RIGHT_EAR_IDX]
+            candidates: list[tuple[float, str, tuple[float, float]]] = []
+            for use_left, ear in ((True, le), (False, re)):
+                if float(ear[2]) < EAR_KEYPOINT_MIN_CONF:
+                    continue
+                cand_side = "LEFT" if use_left else "RIGHT"
+                cand_tip = (float(ear[0]), float(ear[1]))
+                if not is_side_profile(kp, cand_side, cand_tip):
+                    continue
+                vis = ear_visibility_score(kp, cand_side)
+                if prefer_side == "left" and use_left:
+                    vis += 0.15
+                elif prefer_side == "right" and not use_left:
+                    vis += 0.15
+                candidates.append((vis, cand_side, cand_tip))
+            if not candidates:
                 return None
+            candidates.sort(key=lambda t: t[0], reverse=True)
+            _, side_name, tip = candidates[0]
             return tip, side_name, kp, box
         except Exception:
             return None
-
-    def _pick_ear(
-        self,
-        kp: np.ndarray,
-        prefer_side: Optional[str] = None,
-    ) -> Tuple[Optional[Tuple[float, float]], str]:
-        """Pick visible ear; soft prefer_side, switch when the other ear wins."""
-        le, re = kp[self.LEFT_EAR_IDX], kp[self.RIGHT_EAR_IDX]
-        cands: list[Tuple[float, str, Tuple[float, float]]] = []
-        for ear, name in ((le, "LEFT"), (re, "RIGHT")):
-            conf = float(ear[2])
-            if conf < EAR_KEYPOINT_MIN_CONF:
-                continue
-            tip = (float(ear[0]), float(ear[1]))
-            if not is_side_profile(kp, name, tip):
-                continue
-            score = conf
-            if prefer_side and prefer_side.lower() == name.lower():
-                score += 0.08  # light stickiness only
-            cands.append((score, name, tip))
-        if not cands:
-            # Last resort: higher-conf ear even if side-profile gate failed
-            for ear, name in ((le, "LEFT"), (re, "RIGHT")):
-                conf = float(ear[2])
-                if conf < EAR_KEYPOINT_MIN_CONF:
-                    continue
-                tip = (float(ear[0]), float(ear[1]))
-                score = conf
-                if prefer_side and prefer_side.lower() == name.lower():
-                    score += 0.05
-                cands.append((score, name, tip))
-        if not cands:
-            return None, "RIGHT"
-        cands.sort(key=lambda t: t[0], reverse=True)
-        _score, side_name, tip = cands[0]
-        return tip, side_name

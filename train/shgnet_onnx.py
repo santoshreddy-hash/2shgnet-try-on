@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Optional, Tuple
+from typing import Any, Optional, Tuple
 
 import cv2
 import numpy as np
@@ -12,8 +12,13 @@ import numpy as np
 from train.config import INPUT_SIZE, NUM_LANDMARKS_56, resolve_onnx_export
 
 
-def preprocess_ear_bgr_numpy(ear_bgr: np.ndarray, size: int = INPUT_SIZE) -> np.ndarray:
-    """Match training preprocess → float32 NCHW BGR [0,1]."""
+def preprocess_ear_bgr_numpy(
+    ear_bgr: np.ndarray,
+    size: int = INPUT_SIZE,
+    *,
+    out_buf: Optional[np.ndarray] = None,
+) -> np.ndarray:
+    """Match training preprocess → float32 NCHW BGR [0,1]. Reuses out_buf when provided."""
     if ear_bgr.size == 0:
         raise ValueError("Empty ear crop")
     img = cv2.resize(ear_bgr, (size, size), interpolation=cv2.INTER_LINEAR)
@@ -21,7 +26,13 @@ def preprocess_ear_bgr_numpy(ear_bgr: np.ndarray, size: int = INPUT_SIZE) -> np.
     y, cr, cb = cv2.split(ycrcb)
     y = cv2.equalizeHist(y)
     img = cv2.cvtColor(cv2.merge([y, cr, cb]), cv2.COLOR_YCrCb2BGR)
-    arr = img.astype(np.float32) / 255.0
+    scale = np.float32(1.0 / 255.0)
+    if out_buf is not None and out_buf.shape == (1, 3, size, size) and out_buf.dtype == np.float32:
+        out_buf[0, 0] = img[:, :, 0].astype(np.float32, copy=False) * scale
+        out_buf[0, 1] = img[:, :, 1].astype(np.float32, copy=False) * scale
+        out_buf[0, 2] = img[:, :, 2].astype(np.float32, copy=False) * scale
+        return out_buf
+    arr = img.astype(np.float32) * scale
     return np.transpose(arr, (2, 0, 1))[None, ...].astype(np.float32)
 
 
@@ -59,6 +70,27 @@ def heatmaps_to_points_soft(
     return pts[0] if single else pts
 
 
+def _apply_session_options(so: Any, opts: Any | None) -> None:
+    import onnxruntime as ort
+
+    level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
+    if opts is not None:
+        name = str(getattr(opts, "graph_optimization", "all")).lower()
+        if name in ("basic", "ort_enable_basic"):
+            level = ort.GraphOptimizationLevel.ORT_ENABLE_BASIC
+        elif name in ("extended", "ort_enable_extended"):
+            level = ort.GraphOptimizationLevel.ORT_ENABLE_EXTENDED
+        elif name in ("none", "disabled", "ort_disable_all"):
+            level = ort.GraphOptimizationLevel.ORT_DISABLE_ALL
+        so.intra_op_num_threads = int(getattr(opts, "intra_op_num_threads", 0))
+        so.inter_op_num_threads = int(getattr(opts, "inter_op_num_threads", 0))
+        so.enable_mem_pattern = bool(getattr(opts, "enable_mem_pattern", True))
+        so.enable_cpu_mem_arena = bool(getattr(opts, "enable_cpu_mem_arena", True))
+    else:
+        so.intra_op_num_threads = 0
+    so.graph_optimization_level = level
+
+
 class SHGNet56Onnx:
     """SHGNet-56 via ONNX Runtime — no PyTorch at inference."""
 
@@ -67,6 +99,9 @@ class SHGNet56Onnx:
         onnx_path: str | Path | None = None,
         input_size: int = INPUT_SIZE,
         providers: Optional[list[str]] = None,
+        *,
+        ort_opts: Any | None = None,
+        reuse_buffers: bool = True,
     ) -> None:
         import onnxruntime as ort
 
@@ -90,8 +125,7 @@ class SHGNet56Onnx:
             providers = [p for p in preferred if p in avail] or ["CPUExecutionProvider"]
 
         so = ort.SessionOptions()
-        so.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
-        so.intra_op_num_threads = 0  # let EP decide
+        _apply_session_options(so, ort_opts)
         try:
             self.session = ort.InferenceSession(
                 str(path), sess_options=so, providers=providers
@@ -110,9 +144,17 @@ class SHGNet56Onnx:
         self.input_size = input_size
         self.input_name = self.session.get_inputs()[0].name
         self.output_name = self.session.get_outputs()[0].name
+        self._reuse_buffers = bool(reuse_buffers)
+        self._input_buf: Optional[np.ndarray] = (
+            np.empty((1, 3, input_size, input_size), dtype=np.float32)
+            if self._reuse_buffers
+            else None
+        )
+        threads = getattr(so, "intra_op_num_threads", 0)
         print(
             f"[SHGNet-56-ONNX] Loaded {path.name} "
-            f"providers={self.session.get_providers()}"
+            f"providers={self.session.get_providers()} "
+            f"intra_op_threads={threads}"
         )
 
     def predict(self, ear_bgr: np.ndarray) -> np.ndarray:
@@ -121,7 +163,9 @@ class SHGNet56Onnx:
 
     def predict_with_score(self, ear_bgr: np.ndarray) -> Tuple[np.ndarray, float]:
         """Return ((56, 2) in 256-space, mean peak heatmap score)."""
-        x = preprocess_ear_bgr_numpy(ear_bgr, self.input_size)
+        x = preprocess_ear_bgr_numpy(
+            ear_bgr, self.input_size, out_buf=self._input_buf if self._reuse_buffers else None
+        )
         outs = self.session.run([self.output_name], {self.input_name: x})
         hm = np.asarray(outs[0])
         hm0 = hm[0] if hm.ndim == 4 else hm

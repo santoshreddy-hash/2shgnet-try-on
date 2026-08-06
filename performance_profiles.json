@@ -1,0 +1,153 @@
+{
+  "auto_detect": {
+    "high_min_cpu_cores": 6,
+    "high_min_ram_gb": 8,
+    "high_if_gpu_ep": true,
+    "benchmark_frames": 3,
+    "high_min_bench_fps": 22.0,
+    "medium_min_score": 45,
+    "high_min_score": 75
+  },
+  "browser_auto_detect": {
+    "high_min_cpu_cores": 6,
+    "high_min_device_memory_gb": 4,
+    "mobile_default_low": false,
+    "mobile_cap": "medium",
+    "high_if_webgpu": false,
+    "webgpu_score_bonus": 0,
+    "medium_min_score": 45,
+    "high_min_score": 70,
+    "low_max_cores": 3
+  },
+  "quality": {
+    "comment": "Frozen on every device — same landmark math. Profiles only change FPS / cadence slightly.",
+    "infer_width": 640,
+    "infer_height": 360,
+    "yolo_imgsz": 640,
+    "flip_inference": "adaptive",
+    "left_always_flip_compare": true,
+    "left_flip_recheck_every": 8,
+    "flip_score_threshold": 0.12,
+    "min_shg_score": 0.08,
+    "yolo_conf_drop": 0.08,
+    "skip_shg_on_still": false,
+    "still_motion_px": 1.5,
+    "stick_n_track": 16,
+    "roi_tracking": true,
+    "landmark_reuse": true,
+    "yolo_on_track_lost_only": true,
+    "allow_resolution_scale": false,
+    "freeze_camera_ladder": true,
+    "overlay_only_render": true,
+    "reuse_preprocess_buffers": true
+  },
+  "browser": {
+    "high": {
+      "camera_width": 640,
+      "camera_height": 360,
+      "process_width": 640,
+      "process_height": 360,
+      "target_fps": 25,
+      "fps_max": 25,
+      "yolo_imgsz": 640,
+      "shg_every": 1,
+      "shg_every_max": 2
+    },
+    "medium": {
+      "camera_width": 640,
+      "camera_height": 360,
+      "process_width": 640,
+      "process_height": 360,
+      "target_fps": 25,
+      "fps_max": 25,
+      "yolo_imgsz": 640,
+      "shg_every": 1,
+      "shg_every_max": 2
+    },
+    "low": {
+      "camera_width": 640,
+      "camera_height": 360,
+      "process_width": 640,
+      "process_height": 360,
+      "target_fps": 25,
+      "fps_max": 25,
+      "yolo_imgsz": 640,
+      "shg_every": 1,
+      "shg_every_max": 2
+    }
+  },
+  "camera_ladder": [
+    { "width": 640, "height": 360 }
+  ],
+  "dynamic_scaling": {
+    "enabled": true,
+    "drop_below_ratio": 0.65,
+    "recover_above_ratio": 0.90,
+    "cooldown_frames": 30,
+    "warmup_frames": 45,
+    "max_extra_skip": 1,
+    "resolution_scale_step": 1.0,
+    "min_resolution_scale": 1.0,
+    "work_budget_ratio": 0.98,
+    "recover_work_ratio": 0.75
+  },
+  "profiles": {
+    "high": {
+      "label": "High-Performance",
+      "target_fps": 25,
+      "fps_max": 25,
+      "camera_width": 640,
+      "camera_height": 360,
+      "process_width": 640,
+      "process_height": 360,
+      "yolo_every": 2,
+      "shg_every": 1,
+      "adapt_cap": 2,
+      "onnx": {
+        "graph_optimization": "all",
+        "intra_op_num_threads": 0,
+        "inter_op_num_threads": 0,
+        "enable_mem_pattern": true,
+        "enable_cpu_mem_arena": true
+      }
+    },
+    "medium": {
+      "label": "Medium-Performance",
+      "target_fps": 25,
+      "fps_max": 25,
+      "camera_width": 640,
+      "camera_height": 360,
+      "process_width": 640,
+      "process_height": 360,
+      "yolo_every": 2,
+      "shg_every": 1,
+      "adapt_cap": 2,
+      "onnx": {
+        "graph_optimization": "all",
+        "intra_op_num_threads": 0,
+        "inter_op_num_threads": 0,
+        "enable_mem_pattern": true,
+        "enable_cpu_mem_arena": true
+      }
+    },
+    "low": {
+      "label": "Low-Compute",
+      "target_fps": 25,
+      "fps_max": 25,
+      "camera_width": 640,
+      "camera_height": 360,
+      "process_width": 640,
+      "process_height": 360,
+      "yolo_every": 2,
+      "shg_every": 1,
+      "adapt_cap": 2,
+      "onnx": {
+        "graph_optimization": "all",
+        "intra_op_num_threads": 2,
+        "inter_op_num_threads": 1,
+        "enable_mem_pattern": true,
+        "enable_cpu_mem_arena": true
+      }
+    }
+  }
+}

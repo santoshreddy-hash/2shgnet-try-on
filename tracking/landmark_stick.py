@@ -16,7 +16,7 @@ _LK_WIN = (31, 31)
 _LK_CRITERIA = (cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 30, 0.01)
 _MAX_STEP = 48.0  # px/frame clamp — rejects face-feature jumps
 # How much texture LK pulls a new SHG pose toward the ear surface
-_SHG_BLEND = 0.65  # stronger texture pull — landmarks stay glued to ear skin
+_SHG_BLEND = 0.42
 
 
 class LandmarkStickTracker:

@@ -47,6 +47,10 @@ labels.zip
 models.zip
 attachments.zip
 attachments/
-
-# Local scratch / screen-recording extracts
-tmp_media/
+.vercel-out/
+.vercel/
+.tmp-vids/
+*.mov
+*.mp4
+!docs/**/*.mp4
+web/vendor/

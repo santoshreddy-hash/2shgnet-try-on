@@ -152,7 +152,8 @@ class OneEuroLandmarkFilter:
             scale = np.minimum(1.0, max_step_px / np.maximum(dist, 1e-6))
             pts[:n] = self._last_out[:n] + delta * scale
 
-        # Rest freeze with hysteresis: steady at rest, release cleanly on motion
+        # Rest freeze: only on tip-relative shape jitter (not tip motion).
+        # High threshold so freeze rarely blocks shape catch-up after SHG.
         if self.rest_speed_px > 0:
             raw_disp = np.linalg.norm(pts[:n] - self._last_out[:n], axis=1)
             raw_speed = float(np.median(raw_disp) / max(dt, 1e-6))
@@ -160,13 +161,7 @@ class OneEuroLandmarkFilter:
 
             if self._frozen:
                 if raw_speed < release_speed:
-                    for i in range(n):
-                        self._fx[i]._x_prev = float(self._last_out[i, 0])
-                        self._fy[i]._x_prev = float(self._last_out[i, 1])
-                        self._fx[i]._dx_prev = 0.0
-                        self._fy[i]._dx_prev = 0.0
                     return self._last_out.copy()
-                # Real motion — unfreeze and track
                 self._frozen = False
                 self._rest_frames = 0
             else:
@@ -174,11 +169,6 @@ class OneEuroLandmarkFilter:
                     self._rest_frames += 1
                     if self._rest_frames >= self.rest_hold_frames:
                         self._frozen = True
-                        for i in range(n):
-                            self._fx[i]._x_prev = float(self._last_out[i, 0])
-                            self._fy[i]._x_prev = float(self._last_out[i, 1])
-                            self._fx[i]._dx_prev = 0.0
-                            self._fy[i]._dx_prev = 0.0
                         return self._last_out.copy()
                 else:
                     self._rest_frames = 0
@@ -200,12 +190,50 @@ class OneEuroLandmarkFilter:
         max_step_px: float = 8.0,
         snap: bool = False,
     ) -> np.ndarray:
-        """Smooth landmark shape in tip-relative space; output stays locked to tip."""
+        """Smooth tip-relative offsets only; reconstruct with the live tip (never lag tip)."""
         tip_arr = np.asarray(tip, dtype=np.float32).reshape(1, 2)
         pts = np.asarray(points, dtype=np.float32).reshape(-1, 2)
         rel = pts - tip_arr
-        rel_smooth = self.update(rel, dt, side=side, max_step_px=max_step_px, snap=snap)
+        rel_smooth = self.filter_offsets(
+            rel, dt, side=side, max_step_px=max_step_px, snap=snap
+        )
         return rel_smooth + tip_arr
+
+    def filter_offsets(
+        self,
+        rel: np.ndarray,
+        dt: float,
+        side: Optional[str] = None,
+        max_step_px: float = 8.0,
+        snap: bool = False,
+    ) -> np.ndarray:
+        """One Euro on tip-relative offsets only (shape). Does not touch tip."""
+        return self.update(
+            np.asarray(rel, dtype=np.float32),
+            dt,
+            side=side,
+            max_step_px=max_step_px,
+            snap=snap,
+        )
+
+    @staticmethod
+    def compose(tip: Tuple[float, float], rel: np.ndarray) -> np.ndarray:
+        """landmarks = latest_tip + offsets (zero tip latency)."""
+        tip_arr = np.asarray(tip, dtype=np.float32).reshape(1, 2)
+        return np.asarray(rel, dtype=np.float32).reshape(-1, 2) + tip_arr
+
+    def sync_offsets(self, rel: np.ndarray) -> None:
+        """Seed filter state to offsets without introducing lag."""
+        pts = np.asarray(rel, dtype=np.float32).reshape(-1, 2)
+        n = min(len(pts), self.num_landmarks)
+        for i in range(n):
+            self._fx[i]._x_prev = float(pts[i, 0])
+            self._fy[i]._x_prev = float(pts[i, 1])
+            self._fx[i]._dx_prev = 0.0
+            self._fy[i]._dx_prev = 0.0
+        self._last_out = pts[:n].copy()
+        self._rest_frames = 0
+        self._frozen = False
 
 
 class OneEuroBoxFilter:

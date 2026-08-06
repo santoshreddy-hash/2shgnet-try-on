@@ -197,7 +197,7 @@ def predict(
     else:
         crop, meta = cropper.crop(img_bgr, allow_center_fallback=False)
         if meta is None:
-            msg = "Turn head — clear SIDE PROFILE of one ear"
+            msg = "Looking for ear…"
             vis = img_bgr.copy()
             cv2.putText(
                 vis, msg, (8, 28), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2

@@ -1,9 +1,43 @@
 {
-  "min_cutoff": 1.8,
-  "beta": 0.85,
-  "d_cutoff": 1.19,
-  "rest_speed_px": 1.5,
-  "rest_hold_frames": 2,
-  "rest_release_mult": 1.5,
-  "max_step_px": 42.0
+  "comment": "Low-lag tip-relative One Euro. Filter applies to offsets only; tip is always live. High min_cutoff/beta for fast shape catch-up with acceptable rest stability.",
+  "default_profile": "medium",
+  "min_cutoff": 3.2,
+  "beta": 1.1,
+  "d_cutoff": 1.45,
+  "rest_speed_px": 6.0,
+  "rest_hold_frames": 1,
+  "rest_release_mult": 1.15,
+  "max_step_px": 110.0,
+  "profiles": {
+    "high": {
+      "label": "High-Performance",
+      "min_cutoff": 3.6,
+      "beta": 1.3,
+      "d_cutoff": 1.5,
+      "rest_speed_px": 8.0,
+      "rest_hold_frames": 1,
+      "rest_release_mult": 1.12,
+      "max_step_px": 130.0
+    },
+    "medium": {
+      "label": "Medium-Performance",
+      "min_cutoff": 3.2,
+      "beta": 1.1,
+      "d_cutoff": 1.45,
+      "rest_speed_px": 6.0,
+      "rest_hold_frames": 1,
+      "rest_release_mult": 1.15,
+      "max_step_px": 110.0
+    },
+    "low": {
+      "label": "Low-Compute",
+      "min_cutoff": 3.0,
+      "beta": 1.0,
+      "d_cutoff": 1.4,
+      "rest_speed_px": 5.5,
+      "rest_hold_frames": 1,
+      "rest_release_mult": 1.15,
+      "max_step_px": 100.0
+    }
+  }
 }

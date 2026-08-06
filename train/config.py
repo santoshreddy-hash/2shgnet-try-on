@@ -27,6 +27,8 @@ PRETRAINED_56 = ROOT / "models" / "shgnet" / "SHGNet-56_final.pth"
 YOLO_ONNX = ROOT / "models" / "yolo26n-pose.onnx"
 # Prefer models/yolo/ if top-level stub missing
 YOLO_ONNX_ALT = ROOT / "models" / "yolo" / "yolo26n-pose.onnx"
+YOLO_PT = ROOT / "models" / "yolo" / "yolo11n-pose.pt"
+YOLO_PT_ALT = ROOT / "models" / "yolo11n-pose.pt"
 
 OUTPUTS = ROOT / "outputs"
 CKPT_DIR = OUTPUTS / "checkpoints"
@@ -64,6 +66,29 @@ def resolve_yolo_onnx() -> Path:
             return path
     return YOLO_ONNX
 
+
+def resolve_yolo_weights(*, prefer_pt: bool = True) -> Path:
+    """Prefer PyTorch .pt (MPS/CUDA) for live FPS; fall back to ONNX."""
+    if prefer_pt:
+        for path in (YOLO_PT, YOLO_PT_ALT):
+            if path.is_file() and path.stat().st_size > 1_000_000:
+                return path
+    return resolve_yolo_onnx()
+
+
+def resolve_yolo_device() -> str:
+    """Best Ultralytics device string for this machine."""
+    try:
+        import torch
+
+        if torch.cuda.is_available():
+            return "0"
+        if getattr(torch.backends, "mps", None) and torch.backends.mps.is_available():
+            return "mps"
+    except Exception:
+        pass
+    return "cpu"
+
 # Model I/O
 INPUT_SIZE = 256
 HEATMAP_SIZE = 64
@@ -75,7 +100,8 @@ GAUSSIAN_SIGMA = 2.0
 # Crop (jewellery-aligned tip-centered full-ear)
 # Live needs ~2.1–2.3× pinna so lobe stays in-frame; 1.65 clipped #56 upward.
 CROP_PAD = 2.15
-EAR_KEYPOINT_MIN_CONF = 0.30
+# YOLO ear keypoint confidence — keep low so three-quarter / partial views still lock
+EAR_KEYPOINT_MIN_CONF = 0.15
 
 # Training stages
 STAGE1_EPOCHS = 30
@@ -103,21 +129,21 @@ AUG_FLIP_PROB = 0.5
 PCK_THRESHOLDS = (0.02, 0.05, 0.10)
 
 # Temporal smoothing (One Euro) — stick to ear under head motion
-ONE_EURO_MIN_CUTOFF = 1.8
-ONE_EURO_BETA = 0.85
-ONE_EURO_D_CUTOFF = 1.19
-ONE_EURO_REST_SPEED_PX = 1.5
-ONE_EURO_REST_HOLD_FRAMES = 2
-ONE_EURO_REST_RELEASE_MULT = 1.5
-ONE_EURO_MAX_STEP_PX = 42.0
+ONE_EURO_MIN_CUTOFF = 3.2
+ONE_EURO_BETA = 1.1
+ONE_EURO_D_CUTOFF = 1.45
+ONE_EURO_REST_SPEED_PX = 6.0
+ONE_EURO_REST_HOLD_FRAMES = 1
+ONE_EURO_REST_RELEASE_MULT = 1.15
+ONE_EURO_MAX_STEP_PX = 110.0
 
 # Live FPS — hard band for desktop + browser (never outside this range)
-CAMERA_FPS_MIN = 20
+CAMERA_FPS_MIN = 12
 CAMERA_FPS_MAX = 30
 CAMERA_FPS = 25  # default setpoint (mid-band)
-# Capture / process size (aspect preserved; quality default for desktop)
-FRAME_WIDTH = 960
-FRAME_HEIGHT = 540
-# Sparse inference defaults (dense enough for stable lock; tip-hold fills gaps)
-LIVE_YOLO_EVERY = 1
-LIVE_SHG_EVERY = 1
+# Canonical infer size (quality-frozen; overridden by performance_profiles.json)
+FRAME_WIDTH = 640
+FRAME_HEIGHT = 360
+# Sparse inference defaults (overridden by performance profiles at runtime)
+LIVE_YOLO_EVERY = 2
+LIVE_SHG_EVERY = 2

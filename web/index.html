@@ -54,6 +54,7 @@
       background: #000;
       width: 100%;
       min-height: 320px;
+      aspect-ratio: 16 / 9;
       overflow: hidden;
       border: 1px solid #2a3542;
     }
@@ -61,10 +62,14 @@
     #out {
       display: block;
       width: 100%;
-      height: auto;
+      height: 100%;
       max-height: 75vh;
       object-fit: contain;
       background: #000;
+    }
+    #status {
+      min-height: 5.5em;
+      white-space: pre-wrap;
     }
     .hint {
       font-size: 0.85rem;
@@ -123,6 +128,53 @@
       width: 100%;
       accent-color: var(--accent);
     }
+    .device-card {
+      margin-top: 0.85rem;
+      padding: 0.75rem;
+      border: 1px solid #2a3542;
+      background: #121820;
+    }
+    .device-card .tier-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 0.5rem;
+      margin-bottom: 0.5rem;
+    }
+    .tier-pill {
+      display: inline-block;
+      font-size: 0.75rem;
+      font-weight: 700;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      padding: 0.25rem 0.55rem;
+      border: 1px solid #3a4654;
+      color: var(--muted);
+    }
+    .tier-pill.high { color: #062016; background: var(--accent); border-color: var(--accent); }
+    .tier-pill.medium { color: #1a1400; background: var(--warn); border-color: var(--warn); }
+    .tier-pill.low { color: #fff; background: #4a5563; border-color: #4a5563; }
+    .tier-pill.checking { color: var(--muted); }
+    .device-card .plan-title {
+      font-size: 0.8rem;
+      color: var(--text);
+      font-weight: 600;
+      margin: 0.35rem 0 0.25rem;
+    }
+    .device-card ul {
+      margin: 0;
+      padding-left: 1.1rem;
+      font-size: 0.8rem;
+      color: var(--muted);
+      line-height: 1.45;
+    }
+    .device-card select {
+      background: var(--panel);
+      color: var(--text);
+      border: 1px solid #2a3542;
+      padding: 0.3rem 0.4rem;
+      font-size: 0.8rem;
+    }
   </style>
 </head>
 <body>
@@ -130,7 +182,8 @@
     <h1>SHGNet-56 — live in browser</h1>
     <p class="sub">
       WASM ONNX pipeline (no Gradio): YOLO tip → ear crop → SHGNet-56 → One Euro.
-      Piercing (#56) highlighted in red.
+      Piercing (#56) highlighted in red. <strong>Load models</strong> runs a device
+      compatibility test, categorizes <strong>high / medium / low</strong>, then loads with that plan.
     </p>
 
     <div class="layout">
@@ -140,17 +193,38 @@
           <button id="startCam" disabled>Start live cam</button>
           <button id="stopCam" class="stop" disabled>Stop cam</button>
         </div>
+        <div class="device-card" id="deviceCard">
+          <div class="tier-row">
+            <span>Device compatibility</span>
+            <span class="tier-pill checking" id="tierPill">pending</span>
+          </div>
+          <div class="tier-row">
+            <label for="tierSelect" style="font-size:0.8rem;color:var(--muted)">Working plan</label>
+            <select id="tierSelect">
+              <option value="auto">Auto (recommended)</option>
+              <option value="high">High</option>
+              <option value="medium">Medium</option>
+              <option value="low">Low</option>
+            </select>
+          </div>
+          <p class="plan-title" id="planTitle">Click Load models to test this device</p>
+          <ul id="planList">
+            <li>Compatibility test runs when you click Load models</li>
+            <li>Then categorizes high / medium / low and applies that plan</li>
+          </ul>
+          <p class="hint" id="deviceDetail" style="margin-top:0.5rem"></p>
+        </div>
         <div class="fps-control">
           <label>
-            <span class="row"><span>Target FPS (20–30)</span><span class="val" id="fpsTargetVal">25</span></span>
-            <input type="range" id="fpsSlider" min="20" max="30" value="25" step="1" />
+            <span class="row"><span>Target FPS (20–25)</span><span class="val" id="fpsTargetVal">25</span></span>
+            <input type="range" id="fpsSlider" min="20" max="25" value="25" step="1" />
           </label>
         </div>
         <p class="hint">
-          Clear side profile. FPS hard-clamped to <strong>20–30</strong>.
-          YOLO + SHGNet run in <strong>one Web Worker</strong>; tip-hold keeps landmarks glued on the UI thread.
+          Clear side profile. <strong>Load models</strong> = device test → tier → plan → workers.
+          Override: <code>?performance=high|medium|low</code>
         </p>
-        <p id="status">Click Load models…</p>
+        <p id="status">Click Load models to run the device compatibility test…</p>
         <div id="sizes"></div>
       </div>
       <div class="stage">

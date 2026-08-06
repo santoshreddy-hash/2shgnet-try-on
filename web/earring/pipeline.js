@@ -9,44 +9,51 @@ import * as ort from "/vendor/onnxruntime-web/dist/ort.wasm.min.mjs";
 import { OneEuroLandmarks } from "../one_euro.js";
 import { YoloPoseBrowser } from "../yolo_pose.js";
 import { canvasRgbaToBgrChw, heatmapsToPointsSoft } from "../preprocess.js";
+import {
+  resolveBrowserPerformance,
+  BrowserDynamicScaler,
+  parsePerfModeFromUrl,
+  CameraSizeAdapter,
+} from "../performance.js";
+import { yieldToPaint } from "../yield.js";
+import { OrtInferenceWorker } from "../ort_worker_client.js";
+import {
+  CROP_PAD,
+  REFINE_PAD,
+  YOLO_BOX_CONF,
+  MIN_SHG_SCORE,
+  PIERCING_INDEX,
+  pinnaHeight,
+  isSideProfile,
+  landmarksOk,
+  tipCropCenter,
+  rescueCropCenter,
+} from "../ear_geometry.js";
 
 const SHGNET_URL = "/models/shgnet/SHGNet-56.onnx";
 const YOLO_URL = "/models/yolo/yolo26n-pose.onnx";
 const WASM_PATH = "/vendor/onnxruntime-web/dist/";
 
-const CROP_PAD = 1.65;
-const REFINE_PAD = 1.35;
-const YOLO_EVERY = 1;
-const SHG_EVERY = 1;
-// Must match ONNX fixed input [1,3,640,640] — other sizes break detection
 const YOLO_IMGSZ = 640;
-const YOLO_CONF = 0.22;
-const YOLO_LOST_MAX = 8;
-const CAM_FPS_MIN = 20;
-const CAM_FPS_MAX = 30;
+const YOLO_CONF = YOLO_BOX_CONF;
+const CAM_FPS_MIN_DEFAULT = 20;
+const CAM_FPS_MAX_DEFAULT = 25;
 const CAM_FPS_DEFAULT = 25;
-const CAM_WIDTH = 960;
-const CAM_HEIGHT = 540;
 const DT_FALLBACK = 1 / CAM_FPS_DEFAULT;
-const MIRROR_FEED = true;
+/** Mirror selfie preview — only for front/user camera */
+let MIRROR_DEFAULT = true;
 const NUM_LANDMARKS = 56;
-export const PIERCING_INDEX = 55;
+export { PIERCING_INDEX };
 
 const ONE_EURO_DEFAULTS = {
-  min_cutoff: 1.8,
-  beta: 0.85,
-  d_cutoff: 1.19,
-  rest_speed_px: 1.5,
-  rest_hold_frames: 2,
-  rest_release_mult: 1.5,
-  max_step_px: 42.0,
+  min_cutoff: 3.2,
+  beta: 1.1,
+  d_cutoff: 1.45,
+  rest_speed_px: 6.0,
+  rest_hold_frames: 1,
+  rest_release_mult: 1.15,
+  max_step_px: 110.0,
 };
-const BLEND_SMOOTH_REST = 0.9;
-const BLEND_SMOOTH_MOVE = 0.68;
-const BLEND_SPEED_LOW = 40; // px/s
-const BLEND_SPEED_HIGH = 260; // px/s
-const TIP_DEADZONE_PX = 0.7;
-const TIP_MAX_STEP_PX = 22;
 
 export class EarTryOnPipeline {
   /**
@@ -60,12 +67,39 @@ export class EarTryOnPipeline {
 
     this.shgSession = null;
     this.yoloPose = null;
+    /** @type {OrtInferenceWorker | null} */
+    this.ortWorker = null;
+    this.useDedicatedWorker = false;
     this.stream = null;
     this.live = false;
     this.processing = false;
     this.rafId = 0;
     this.ortProxy = false;
     this.targetFps = CAM_FPS_DEFAULT;
+    this.fpsMin = CAM_FPS_MIN_DEFAULT;
+    this.fpsMax = CAM_FPS_MAX_DEFAULT;
+    this.camWidth = 640;
+    this.camHeight = 360;
+    this.yoloEvery = 2;
+    this.shgEvery = 1;
+    this.profileName = "auto";
+    this.profileLabel = "";
+    /** @type {BrowserDynamicScaler | null} */
+    this.perfScaler = null;
+    this.capabilityDetail = "";
+    this.lastInferDoneTs = 0;
+    this.lastHeavyMs = 0;
+    /** @type {CameraSizeAdapter | null} */
+    this.camAdapter = null;
+    this.camResizeInFlight = false;
+    this.smoothMode = false;
+    this.cpuSlowdown = 1;
+    this.mirrorFeed = MIRROR_DEFAULT;
+    this.tipVelX = 0;
+    this.tipVelY = 0;
+    this.lastTipTs = 0;
+    this.lastInferStartTs = 0;
+    this.yoloImgsz = 640;
 
     this.oneEuroCfg = { ...ONE_EURO_DEFAULTS };
     this.smoother = new OneEuroLandmarks(
@@ -108,40 +142,14 @@ export class EarTryOnPipeline {
     this.holdTip = null;
     this.tipSnap = false;
     this.tipPatch = null;
-    this.TIP_PATCH = 11;
-    this.TIP_SEARCH = 18;
+    this.lastYoloTip = null;
+    this.TIP_PATCH = 15;
+    this.TIP_SEARCH = 32;
+    this.TIP_COARSE = 2;
     this.geo = null;
     this.rawRel = null;
-    this.smoothRel = null;
     this.firstLock = true;
     this.overlay = null;
-    this.yoloLost = 0;
-    this.transferring = false;
-    this.tipVel = { x: 0, y: 0 };
-    if (this.yoloPose) this.yoloPose.preferSide = null;
-    this.smoother.reset();
-  }
-
-  clearEarLock() {
-    this.beginTransfer();
-    this.lastYolo = null;
-    this.yoloLost = 0;
-    if (this.yoloPose) this.yoloPose.preferSide = null;
-  }
-
-  beginTransfer() {
-    this.transferring = true;
-    this.side = null;
-    this.tip = null;
-    this.holdTip = null;
-    this.geo = null;
-    this.rawRel = null;
-    this.smoothRel = null;
-    this.overlay = null;
-    this.tipPatch = null;
-    this.firstLock = true;
-    this.tipSnap = true;
-    this.tipVel = { x: 0, y: 0 };
     this.smoother.reset();
   }
 
@@ -149,32 +157,109 @@ export class EarTryOnPipeline {
     return Math.max(1, Number(this.oneEuroCfg.max_step_px) || 42);
   }
 
-  async loadOneEuroSettings() {
+  async loadOneEuroSettings(tier = this.profileName) {
+    const name =
+      tier === "high" || tier === "medium" || tier === "low" ? tier : "medium";
     try {
       const res = await fetch("/one_euro_settings.json", { cache: "no-store" });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
-      this.oneEuroCfg = { ...ONE_EURO_DEFAULTS, ...data };
+      const base = { ...ONE_EURO_DEFAULTS };
+      for (const k of Object.keys(ONE_EURO_DEFAULTS)) {
+        if (data[k] != null) base[k] = data[k];
+      }
+      const tierCfg =
+        (data.profiles && data.profiles[name]) ||
+        (data.profiles && data.profiles.medium) ||
+        {};
+      const picked = {};
+      for (const k of Object.keys(ONE_EURO_DEFAULTS)) {
+        if (tierCfg[k] != null) picked[k] = tierCfg[k];
+      }
+      this.oneEuroCfg = { ...base, ...picked, profile: name };
       this.smoother.applySettings(this.oneEuroCfg);
+      this.smoother.reset();
     } catch {
-      this.smoother.applySettings(ONE_EURO_DEFAULTS);
-      this.oneEuroCfg = { ...ONE_EURO_DEFAULTS };
+      this.oneEuroCfg = { ...ONE_EURO_DEFAULTS, profile: name };
+      this.smoother.applySettings(this.oneEuroCfg);
     }
   }
 
-  configureOrt(useProxy) {
+  async initPerformanceProfile() {
+    const mode = parsePerfModeFromUrl();
+    const { profile, capability, dynamic } = await resolveBrowserPerformance(mode);
+    this.profileName = profile.name;
+    this.profileLabel = profile.label;
+    this.capabilityDetail = capability.detail;
+    this.targetFps = profile.targetFps;
+    this.fpsMin = profile.fpsMin;
+    this.fpsMax = profile.fpsMax;
+    this.camWidth = profile.cameraWidth;
+    this.camHeight = profile.cameraHeight;
+    this.yoloEvery = 2;
+    this.shgEvery = profile.shgEvery;
+    this.cpuSlowdown = Number(profile.cpuSlowdown) || 1;
+    this.smoothMode = true;
+    this.yoloImgsz = 640;
+    this.perfScaler = new BrowserDynamicScaler(profile, dynamic);
+    this.camAdapter = new CameraSizeAdapter(
+      profile.cameraLadder,
+      profile.cameraWidth,
+      profile.cameraHeight
+    );
+    return { profile, capability };
+  }
+
+  async applyCamSize(width, height) {
+    if (!this.stream || this.camResizeInFlight) return;
+    const track = this.stream.getVideoTracks()[0];
+    if (!track) return;
+    this.camResizeInFlight = true;
+    try {
+      await track.applyConstraints({
+        width: { ideal: width },
+        height: { ideal: height },
+      });
+      this.camWidth = width;
+      this.camHeight = height;
+      this.tipPatch = null;
+    } catch (_) {
+      /* keep prior size */
+    } finally {
+      this.camResizeInFlight = false;
+    }
+  }
+
+  adaptInferenceLoad() {
+    if (this.perfScaler) {
+      this.perfScaler.observe(this.pipeMsEma, this.fpsEma);
+      this.yoloEvery = 2;
+      this.shgEvery = this.perfScaler.base?.lockFps
+        ? this.perfScaler.base.shgEvery
+        : this.perfScaler.shgEvery;
+      this.targetFps = this.perfScaler.targetFps;
+    }
+    if (this.camAdapter && this.lastHeavyMs > 0) {
+      const adj = this.camAdapter.observe(this.lastHeavyMs, this.targetFps);
+      if (adj.changed) this.applyCamSize(adj.width, adj.height);
+    }
+  }
+
+  configureOrt(useProxy = true) {
     ort.env.wasm.wasmPaths = WASM_PATH;
     const canSAB =
       typeof SharedArrayBuffer !== "undefined" &&
       (typeof crossOriginIsolated === "undefined" || crossOriginIsolated);
+    const cores = navigator.hardwareConcurrency || 2;
     ort.env.wasm.numThreads = canSAB
-      ? Math.min(4, navigator.hardwareConcurrency || 2)
+      ? Math.min(useProxy ? 2 : 4, cores)
       : 1;
     ort.env.wasm.proxy = !!useProxy;
     this.ortProxy = !!useProxy;
   }
 
   async createSession(url) {
+    await yieldToPaint();
     return ort.InferenceSession.create(url, {
       executionProviders: ["wasm"],
       graphOptimizationLevel: "all",
@@ -182,29 +267,73 @@ export class EarTryOnPipeline {
   }
 
   async loadModels() {
-    this.onStatus("Loading ONNX models (YOLO + SHGNet)…");
-    await this.loadOneEuroSettings();
-    this.configureOrt(true);
-    let shg;
-    let yolo;
-    try {
-      shg = await this.createSession(SHGNET_URL);
-      yolo = await this.createSession(YOLO_URL);
-    } catch (firstErr) {
-      console.warn("ORT proxy load failed; retrying without proxy", firstErr);
-      this.configureOrt(false);
-      shg = await this.createSession(SHGNET_URL);
-      yolo = await this.createSession(YOLO_URL);
+    this.onStatus("Loading YOLO + SHGNet in separate Web Workers…");
+    await yieldToPaint();
+    const { profile, capability } = await this.initPerformanceProfile();
+    await this.loadOneEuroSettings(profile.name);
+    await yieldToPaint();
+
+    this.useDedicatedWorker = false;
+    if (this.ortWorker) {
+      this.ortWorker.terminate();
+      this.ortWorker = null;
     }
-    this.shgSession = shg;
-    this.yoloPose = new YoloPoseBrowser(
-      yolo,
-      (data, dims) => new ort.Tensor("float32", data, dims),
-      YOLO_IMGSZ,
-      YOLO_CONF
-    );
+    try {
+      this.ortWorker = new OrtInferenceWorker({
+        yoloWorkerUrl: "/yolo-worker.js",
+        shgWorkerUrl: "/shg-worker.js",
+      });
+      await this.ortWorker.init({
+        yoloUrl: YOLO_URL,
+        shgUrl: SHGNET_URL,
+        wasmPaths: WASM_PATH,
+        yoloImgsz: this.yoloImgsz,
+      });
+      this.useDedicatedWorker = true;
+      this.shgSession = { worker: true };
+      this.yoloPose = {
+        lastMs: 0,
+        detect: async (source) => {
+          const det = await this.ortWorker.detectYolo(source);
+          this.yoloPose.lastMs = this.ortWorker.lastYoloMs;
+          return det;
+        },
+      };
+      this.ortProxy = true;
+    } catch (workerErr) {
+      console.warn("[ort] dual Workers failed; ORT proxy fallback", workerErr);
+      if (this.ortWorker) {
+        this.ortWorker.terminate();
+        this.ortWorker = null;
+      }
+      this.configureOrt(true);
+      let shg;
+      let yolo;
+      try {
+        yolo = await this.createSession(YOLO_URL);
+        await yieldToPaint();
+        shg = await this.createSession(SHGNET_URL);
+      } catch (firstErr) {
+        console.warn("ORT proxy Worker failed; falling back to main-thread wasm", firstErr);
+        this.configureOrt(false);
+        yolo = await this.createSession(YOLO_URL);
+        await yieldToPaint();
+        shg = await this.createSession(SHGNET_URL);
+      }
+      this.shgSession = shg;
+      this.yoloPose = new YoloPoseBrowser(
+        yolo,
+        (data, dims) => new ort.Tensor("float32", data, dims),
+        this.yoloImgsz,
+        YOLO_CONF
+      );
+      this.yoloPose.yieldBeforeRun = true;
+    }
+
     this.onStatus(
-      `Ready · YOLO + SHGNet · wasm${this.ortProxy ? "+proxy" : ""}`
+      `Ready · ${profile.label}${this.smoothMode ? " · smooth-cam" : ""} · ` +
+        `${this.useDedicatedWorker ? "WW×2 (YOLO|SHG)" : this.ortProxy ? "wasm+Worker" : "wasm"}\n` +
+        `${capability.detail} · ${profile.targetFps} fps · Y/2 · ${profile.cameraWidth}x${profile.cameraHeight}`
     );
     return true;
   }
@@ -213,73 +342,63 @@ export class EarTryOnPipeline {
     return !!(this.shgSession && this.yoloPose);
   }
 
-  pinnaHeight(yolo, vw, vh) {
-    const fmin = Math.min(vw, vh);
-    const tip = yolo.tip;
-    const cands = [];
-    let tipNose = null;
-    if (yolo.nose?.c >= 0.2) {
-      tipNose = Math.hypot(tip.x - yolo.nose.x, tip.y - yolo.nose.y);
-      if (tipNose > fmin * 0.03) cands.push(tipNose * 0.55);
-    }
-    if (yolo.eyeDist && yolo.eyeDist > fmin * 0.02) cands.push(yolo.eyeDist * 0.9);
-    const [, y1, , y2] = yolo.bbox;
-    const bh = y2 - y1;
-    if (bh > 1) cands.push(bh * 0.12);
-    if (!cands.length) return Math.max(40, fmin * 0.12);
-    cands.sort((a, b) => a - b);
-    let h =
-      cands.length === 1 ? cands[0] : cands[Math.floor(cands.length / 2)];
-    if (tipNose != null && tipNose > 1) h = Math.min(h, tipNose * 0.7);
-    return Math.max(40, Math.min(fmin * 0.2, h));
-  }
-
-  isSideProfile(yolo) {
-    if (yolo.earOtherConf != null && yolo.earConf != null) {
-      if (yolo.earOtherConf >= 0.38 && yolo.earOtherConf >= yolo.earConf * 0.72)
-        return false;
-      if (yolo.earConf < 0.35) return false;
-    }
-    if (!yolo.nose || yolo.nose.c < 0.2) return true;
-    const dx = Math.abs(yolo.tip.x - yolo.nose.x);
-    const d = Math.hypot(yolo.tip.x - yolo.nose.x, yolo.tip.y - yolo.nose.y);
-    if (dx < 22 || d < 28) return false;
-    return true;
-  }
-
-  medial(yolo, tip, side, vw) {
-    if (yolo.nose?.c >= 0.2) {
-      const vx = yolo.nose.x - tip.x;
-      const vy = yolo.nose.y - tip.y;
-      const n = Math.hypot(vx, vy);
-      if (n > 1e-3) return [vx / n, vy / n];
-    }
-    const vx = 0.5 * vw - tip.x;
-    if (Math.abs(vx) > 1e-3) return [Math.sign(vx), 0];
-    return [side === "LEFT" ? -1 : 1, 0];
+  clearEarLock(reason) {
+    this.smoother.reset();
+    this.rawRel = null;
+    this.firstLock = true;
+    this.geo = null;
+    this.overlay = null;
+    this.holdTip = null;
+    this.tip = null;
+    this.lastYoloTip = null;
+    this.tipVelX = 0;
+    this.tipVelY = 0;
+    this.tipSnap = true;
+    this.side = null;
+    if (reason) console.log(`[earring] clear lock: ${reason}`);
   }
 
   updateGeoFromYolo(yolo, vw, vh) {
-    if (!this.isSideProfile(yolo)) return false;
+    if (!isSideProfile(yolo)) {
+      if (this.rawRel || this.overlay || this.holdTip) this.clearEarLock("not_side_profile");
+      else this.overlay = null;
+      return false;
+    }
     const tipPt = yolo.tip;
-    const pinna = this.pinnaHeight(yolo, vw, vh);
+    if (this.side && yolo.side && yolo.side !== this.side) {
+      this.clearEarLock(`side_${this.side}_to_${yolo.side}`);
+    }
+    if (this.holdTip || this.lastYoloTip) {
+      const prev = this.holdTip || this.lastYoloTip;
+      const jump = Math.hypot(tipPt.x - prev.x, tipPt.y - prev.y);
+      const lim = Math.max(36, (this.geo?.side || 80) * 0.45);
+      if (this.rawRel && jump > lim) this.clearEarLock(`tip_jump_${jump.toFixed(0)}px`);
+    }
+    const pinna = pinnaHeight(yolo, vw, vh);
     const sideLen = pinna * CROP_PAD;
-    const [mx] = this.medial(yolo, tipPt, yolo.side, vw);
-    const ncx = tipPt.x + mx * (0.1 * pinna);
-    const ncy = tipPt.y + 0.06 * pinna;
+    const { ncx, ncy, mx } = tipCropCenter(tipPt, pinna, yolo, yolo.side, vw);
     if (!this.geo) {
       this.geo = { cx: ncx, cy: ncy, side: sideLen };
     } else {
-      const a = 0.85;
+      const a = 0.45;
       this.geo = {
         cx: (1 - a) * this.geo.cx + a * ncx,
         cy: (1 - a) * this.geo.cy + a * ncy,
         side: (1 - a) * this.geo.side + a * sideLen,
       };
     }
+    const half = this.geo.side * 0.5;
+    if (
+      Math.abs(tipPt.x - this.geo.cx) > half * 0.55 ||
+      Math.abs(tipPt.y - this.geo.cy) > half * 0.55
+    ) {
+      const r = rescueCropCenter(tipPt, pinna, mx);
+      this.geo = { cx: r.cx, cy: r.cy, side: this.geo.side };
+    }
     this.side = yolo.side;
     this.tip = tipPt;
     this.holdTip = { x: tipPt.x, y: tipPt.y };
+    this.lastYoloTip = { x: tipPt.x, y: tipPt.y };
     return true;
   }
 
@@ -312,8 +431,6 @@ export class EarTryOnPipeline {
         sy2 - sy1
       );
     }
-    this.cropCtx.setTransform(1, 0, 0, 1, 0, 0);
-    this.cropCtx.clearRect(0, 0, 256, 256);
     this.cropCtx.save();
     if (needFlip) {
       this.cropCtx.translate(256, 0);
@@ -327,39 +444,6 @@ export class EarTryOnPipeline {
   cropToTensor() {
     const img = this.cropCtx.getImageData(0, 0, 256, 256);
     return new ort.Tensor("float32", canvasRgbaToBgrChw(img), [1, 3, 256, 256]);
-  }
-
-  landmarksOk(pts, tipPt, sidePx) {
-    let x0 = Infinity,
-      y0 = Infinity,
-      x1 = -Infinity,
-      y1 = -Infinity;
-    for (const [x, y] of pts) {
-      if (x < x0) x0 = x;
-      if (y < y0) y0 = y;
-      if (x > x1) x1 = x;
-      if (y > y1) y1 = y;
-    }
-    const bw = x1 - x0;
-    const bh = y1 - y0;
-    const span = Math.max(bw, bh);
-    const ratio = span / Math.max(1, sidePx);
-    if (ratio < 0.4 || ratio > 0.88) return false;
-    if (Math.min(bw, bh) < span * 0.28) return false;
-    let mx = 0,
-      my = 0;
-    for (const [x, y] of pts) {
-      mx += x;
-      my += y;
-    }
-    mx /= pts.length;
-    my /= pts.length;
-    if (Math.hypot(mx - tipPt.x, my - tipPt.y) > sidePx * 0.45) return false;
-    const padX = 0.08 * bw;
-    const padY = 0.08 * bh;
-    if (tipPt.x < x0 - padX || tipPt.x > x1 + padX) return false;
-    if (tipPt.y < y0 - padY || tipPt.y > y1 + padY) return false;
-    return true;
   }
 
   hullSquare(pts, pad) {
@@ -379,12 +463,24 @@ export class EarTryOnPipeline {
 
   async runShg(needFlip, ox, oy, sidePx) {
     const t0 = performance.now();
-    const out = await this.shgSession.run({
-      [this.shgSession.inputNames[0]]: this.cropToTensor(),
-    });
-    const ms = performance.now() - t0;
-    this.inferMsEma = this.inferMsEma ? this.inferMsEma * 0.85 + ms * 0.15 : ms;
-    let pts256 = heatmapsToPointsSoft(out[this.shgSession.outputNames[0]], 256);
+    let pts256;
+    if (this.useDedicatedWorker && this.ortWorker?.ready) {
+      const chw = canvasRgbaToBgrChw(
+        this.cropCtx.getImageData(0, 0, 256, 256)
+      );
+      const out = await this.ortWorker.runShg(chw, [1, 3, 256, 256]);
+      pts256 = heatmapsToPointsSoft({ data: out.data, dims: out.dims }, 256);
+      this.inferMsEma = this.inferMsEma
+        ? this.inferMsEma * 0.85 + (this.ortWorker.lastShgMs || 0) * 0.15
+        : this.ortWorker.lastShgMs || performance.now() - t0;
+    } else {
+      const out = await this.shgSession.run({
+        [this.shgSession.inputNames[0]]: this.cropToTensor(),
+      });
+      const ms = performance.now() - t0;
+      this.inferMsEma = this.inferMsEma ? this.inferMsEma * 0.85 + ms * 0.15 : ms;
+      pts256 = heatmapsToPointsSoft(out[this.shgSession.outputNames[0]], 256);
+    }
     const score = pts256.score ?? 0;
     if (needFlip) {
       pts256 = pts256.map(([x, y]) => [255 - x, y]);
@@ -395,7 +491,12 @@ export class EarTryOnPipeline {
   }
 
   async inferFromSnapshot(source, vw, vh, tipPt, sideNow, geoNow, yolo) {
-    if (!geoNow || !tipPt || !sideNow || !this.shgSession) return null;
+    if (!geoNow || !tipPt || !sideNow) return null;
+    if (
+      !this.shgSession &&
+      !(this.useDedicatedWorker && this.ortWorker?.ready)
+    )
+      return null;
 
     let { cx, cy, side: sideLen } = geoNow;
     const half = sideLen * 0.5;
@@ -405,9 +506,10 @@ export class EarTryOnPipeline {
     ) {
       if (yolo) {
         const pinna = sideLen / Math.max(CROP_PAD, 1e-3);
-        const [mx] = this.medial(yolo, tipPt, sideNow, vw);
-        cx = tipPt.x + mx * (0.1 * pinna);
-        cy = tipPt.y + 0.06 * pinna;
+        const { mx } = tipCropCenter(tipPt, pinna, yolo, sideNow, vw);
+        const r = rescueCropCenter(tipPt, pinna, mx);
+        cx = r.cx;
+        cy = r.cy;
       } else {
         cx = tipPt.x;
         cy = tipPt.y;
@@ -432,20 +534,27 @@ export class EarTryOnPipeline {
 
     let { pts, score } = await this.runShg(preferFlip, ox, oy, sidePx);
     const lock = this.firstLock;
-    const ok1 = this.landmarksOk(pts, tipPt, sidePx);
-    if (lock || !ok1) {
+    let ok1 = landmarksOk(pts, tipPt, sidePx);
+    // LEFT: always compare both orientations (same as desktop quality freeze).
+    const shouldFlipCompare =
+      preferFlip || (lock && !ok1) || score < 0.12;
+    if (shouldFlipCompare) {
       this.drawSquareCrop(source, cx, cy, sideLen, !preferFlip);
       const alt = await this.runShg(!preferFlip, ox, oy, sidePx);
+      const okAlt = landmarksOk(alt.pts, tipPt, sidePx);
       if (
-        alt.score > score ||
-        (lock && this.landmarksOk(alt.pts, tipPt, sidePx) && !ok1)
+        alt.score > score + 0.02 ||
+        (okAlt && !ok1) ||
+        (okAlt && alt.score >= score)
       ) {
         pts = alt.pts;
         score = alt.score;
+        ok1 = landmarksOk(pts, tipPt, sidePx);
       }
     }
+    if (preferFlip && !(ok1 && score > MIN_SHG_SCORE)) return null;
 
-    if (lock && this.landmarksOk(pts, tipPt, sidePx) && score > 0.07) {
+    if (lock && ok1 && score > MIN_SHG_SCORE) {
       let x0 = Infinity,
         y0 = Infinity,
         x1 = -Infinity,
@@ -477,17 +586,18 @@ export class EarTryOnPipeline {
             c2.sidePx
           );
           if (
-            this.landmarksOk(refined.pts, tipPt, c2.sidePx) &&
+            landmarksOk(refined.pts, tipPt, c2.sidePx) &&
             refined.score >= score * 0.9
           ) {
             pts = refined.pts;
             score = refined.score;
+            ok1 = true;
           }
         }
       }
     }
 
-    if (!(this.landmarksOk(pts, tipPt, sidePx) && score > 0.07)) return null;
+    if (!(ok1 && score > MIN_SHG_SCORE)) return null;
 
     {
       let x0 = Infinity,
@@ -528,44 +638,21 @@ export class EarTryOnPipeline {
 
   /** Piercing #56 locked to tip (no One Euro lag) so the earring stud sticks. */
   stickyPierce(tipPt) {
-    const rel = this.smoothRel || this.rawRel;
-    if (!rel || !tipPt || !rel[PIERCING_INDEX]) return null;
-    const [rx, ry] = rel[PIERCING_INDEX];
+    if (!this.rawRel || !tipPt || !this.rawRel[PIERCING_INDEX]) return null;
+    const [rx, ry] = this.rawRel[PIERCING_INDEX];
     return { x: tipPt.x + rx, y: tipPt.y + ry };
   }
 
-  blendSmoothWeight(speedPxPerSec) {
-    if (!Number.isFinite(speedPxPerSec)) return BLEND_SMOOTH_REST;
-    if (speedPxPerSec <= BLEND_SPEED_LOW) return BLEND_SMOOTH_REST;
-    if (speedPxPerSec >= BLEND_SPEED_HIGH) return BLEND_SMOOTH_MOVE;
-    const t =
-      (speedPxPerSec - BLEND_SPEED_LOW) / (BLEND_SPEED_HIGH - BLEND_SPEED_LOW);
-    return BLEND_SMOOTH_REST + (BLEND_SMOOTH_MOVE - BLEND_SMOOTH_REST) * t;
-  }
-
-  blendRelativeCloud(relSmooth, relRaw, speedPxPerSec) {
-    if (!relSmooth && !relRaw) return null;
-    if (!relSmooth) return relRaw;
-    if (!relRaw) return relSmooth;
-    const ws = this.blendSmoothWeight(speedPxPerSec);
-    const wr = 1 - ws;
-    return relSmooth.map(([sx, sy], i) => {
-      const [rx, ry] = relRaw[i] || [sx, sy];
-      return [ws * sx + wr * rx, ws * sy + wr * ry];
-    });
-  }
-
-  /** Rigid tip glue — zero lag. One Euro only on SHG shape updates. */
-  applyTipHold(tipPt, sideNow, geoNow, vw, vh) {
-    const relSmooth = this.smoothRel || this.rawRel;
-    const relRaw = this.rawRel || this.smoothRel;
-    const speed = Math.hypot(this.tipVel?.x || 0, this.tipVel?.y || 0);
-    const rel = this.blendRelativeCloud(relSmooth, relRaw, speed);
-    if (!rel || !tipPt || !sideNow || !geoNow) return false;
-    const landmarks = rel.map(([x, y]) => [x + tipPt.x, y + tipPt.y]);
+  applyTipHold(tipPt, sideNow, geoNow, vw, vh, _dt, snap) {
+    if (!this.rawRel || !tipPt || !sideNow || !geoNow) return false;
+    // Rigid tip-lock — One Euro never delays tip; offsets already smoothed at SHG
+    if (snap) this.smoother.syncRelative(this.rawRel);
+    const rigid = this.smoother.compose
+      ? this.smoother.compose(tipPt, this.rawRel)
+      : this.rawRel.map(([x, y]) => [x + tipPt.x, y + tipPt.y]);
     const pierce = this.stickyPierce(tipPt);
-    if (pierce && landmarks[PIERCING_INDEX]) {
-      landmarks[PIERCING_INDEX] = [pierce.x, pierce.y];
+    if (pierce && rigid[PIERCING_INDEX]) {
+      rigid[PIERCING_INDEX] = [pierce.x, pierce.y];
     }
     const sidePx = geoNow.side;
     this.overlay = {
@@ -576,7 +663,7 @@ export class EarTryOnPipeline {
         Math.min(vw, Math.round(geoNow.cx + sidePx * 0.5)),
         Math.min(vh, Math.round(geoNow.cy + sidePx * 0.5)),
       ],
-      landmarks,
+      landmarks: rigid,
       side: sideNow,
       pierce,
     };
@@ -584,10 +671,36 @@ export class EarTryOnPipeline {
   }
 
   async processFrame(vw, vh, dt) {
+    const tick = this.inferTick++;
+    let runYolo =
+      (!this.holdTip && !this.tip) || this.firstLock
+        ? true
+        : tick % Math.max(1, this.yoloEvery) === 0;
+    // Dense SHG: every frame when free (S/1). Old ===1 broke when shgEvery===1.
+    let runShgNet =
+      !this.rawRel || this.firstLock
+        ? !!(this.holdTip || this.tip)
+        : tick % Math.max(1, this.shgEvery) === 0;
+    if (
+      runYolo &&
+      this.holdTip &&
+      this.rawRel &&
+      !this.firstLock &&
+      this.lastHeavyMs > 180 &&
+      tick % (this.yoloEvery * 2) !== 0
+    ) {
+      runYolo = false;
+    }
+    if (!runYolo && !runShgNet) {
+      this.lastInferDoneTs = performance.now();
+      return;
+    }
+
+    await yieldToPaint();
     const tPipe = performance.now();
     this.snapCanvas.width = vw;
     this.snapCanvas.height = vh;
-    if (MIRROR_FEED) {
+    if (this.mirrorFeed) {
       this.snapCtx.save();
       this.snapCtx.translate(vw, 0);
       this.snapCtx.scale(-1, 1);
@@ -597,70 +710,64 @@ export class EarTryOnPipeline {
       this.snapCtx.drawImage(this.video, 0, 0, vw, vh);
     }
 
-    const tick = this.inferTick++;
-    const runYolo = tick % Math.max(1, YOLO_EVERY) === 0;
-    const runShgNet = tick % Math.max(1, SHG_EVERY) === 0;
     let tipPt = this.tip;
     let sideNow = this.side;
     let geoNow = this.geo;
 
     if (runYolo && this.yoloPose) {
-      const y = await this.yoloPose.detect(this.snapCanvas, {
-        preferSide: this.transferring ? null : this.side,
-      });
+      await yieldToPaint();
+      const y = await this.yoloPose.detect(this.snapCanvas);
       if (y) {
-        const sideSwitched = this.side && y.side !== this.side;
-        const tipJumped =
-          this.tip &&
-          !sideSwitched &&
-          Math.hypot(y.tip.x - this.tip.x, y.tip.y - this.tip.y) >
-            Math.max(48, (this.geo?.side || 120) * 0.35);
-        if (sideSwitched || tipJumped) this.beginTransfer();
+        if (this.side && y.side !== this.side) {
+          this.clearEarLock(`yolo_side_${this.side}_to_${y.side}`);
+        }
         this.lastYolo = y;
         if (!this.updateGeoFromYolo(y, vw, vh)) {
-          this.beginTransfer();
-          this.yoloLost = (this.yoloLost || 0) + 1;
-          if (this.yoloLost > YOLO_LOST_MAX) this.clearEarLock();
           this.onStatus("Turn head — clear SIDE PROFILE of one ear");
+          this.overlay = null;
           return;
         }
-        this.yoloLost = 0;
         this.tipSnap = true;
         tipPt = this.tip;
         sideNow = this.side;
         geoNow = this.geo;
-      } else {
-        this.yoloLost = (this.yoloLost || 0) + 1;
-        if (this.yoloLost > 2) this.beginTransfer();
-        if (this.yoloLost > YOLO_LOST_MAX) {
-          this.clearEarLock();
-          tipPt = sideNow = geoNow = null;
+        const now = performance.now();
+        if (this.lastYoloTip && this.lastTipTs) {
+          const dtt = Math.max(0.016, (now - this.lastTipTs) / 1000);
+          this.tipVelX = (tipPt.x - this.lastYoloTip.x) / dtt;
+          this.tipVelY = (tipPt.y - this.lastYoloTip.y) / dtt;
         }
+        this.lastYoloTip = { x: tipPt.x, y: tipPt.y };
+        this.lastTipTs = now;
       }
     }
 
     if (!geoNow || !tipPt || !sideNow) return;
 
-    if (this.transferring || this.firstLock) {
-      if (!runShgNet) return;
-    }
-
-    if (!runShgNet && (this.smoothRel || this.rawRel) && (this.holdTip || tipPt) && !this.transferring) {
-      this.applyTipHold(
-        this.holdTip || tipPt,
-        sideNow,
-        geoNow,
-        vw,
-        vh
-      );
-      this.tipSnap = false;
+    if (!runShgNet) {
+      if (runYolo && tipPt) {
+        const prev = this.holdTip;
+        this.holdTip = { x: tipPt.x, y: tipPt.y };
+        this.tip = this.holdTip;
+        this.tipPatch = null;
+        if (prev && this.geo && this.rawRel) {
+          this.geo = {
+            cx: this.geo.cx + (this.holdTip.x - prev.x),
+            cy: this.geo.cy + (this.holdTip.y - prev.y),
+            side: this.geo.side,
+          };
+        }
+        this.tipSnap = true;
+      }
       const ms = performance.now() - tPipe;
-      this.pipeMsEma = this.pipeMsEma ? this.pipeMsEma * 0.85 + ms * 0.15 : ms;
+      this.pipeMsEma = this.pipeMsEma ? this.pipeMsEma * 0.9 + ms * 0.1 : ms;
+      if (runYolo) this.lastHeavyMs = this.yoloPose?.lastMs || ms;
+      this.lastInferDoneTs = performance.now();
+      this.adaptInferenceLoad();
       return;
     }
 
-    if (!runShgNet) return;
-
+    await yieldToPaint();
     const result = await this.inferFromSnapshot(
       this.snapCanvas,
       vw,
@@ -670,46 +777,49 @@ export class EarTryOnPipeline {
       geoNow,
       this.lastYolo
     );
-    if (!result) {
-      if (this.transferring || this.firstLock) this.overlay = null;
-      return;
-    }
+    if (!result) return;
 
-    const tx = result.tip.x;
-    const ty = result.tip.y;
-    this.holdTip = { x: tx, y: ty };
+    const shgTip = { x: result.tip.x, y: result.tip.y };
+    this.holdTip = { x: shgTip.x, y: shgTip.y };
     this.tip = this.holdTip;
-    if (!this.tipVel) this.tipVel = { x: 0, y: 0 };
-    this.rawRel = result.pts.map(([x, y]) => [x - tx, y - ty]);
+    this.tipPatch = null;
+    const newRel = result.pts.map(([x, y]) => [x - shgTip.x, y - shgTip.y]);
 
-    const snap = this.firstLock || this.transferring;
-    const sm = this.smoother.updateRelative(result.pts, this.holdTip, dt, result.side, {
-      maxStepPx: this.oneEuroMaxStep(),
-      snap,
-    });
-    this.smoothRel = sm.map(([x, y]) => [x - tx, y - ty]);
-    this.firstLock = false;
-    this.transferring = false;
+    const anchor = this.holdTip;
+    const snap = this.firstLock;
+    const stepPx = this.oneEuroMaxStep();
+    this.rawRel = this.smoother.filterOffsets
+      ? this.smoother.filterOffsets(newRel, dt, result.side, {
+          maxStepPx: stepPx,
+          snap,
+        })
+      : this.smoother
+          .updateRelative(result.pts, anchor, dt, result.side, {
+            maxStepPx: stepPx,
+            snap,
+          })
+          .map(([x, y]) => [x - anchor.x, y - anchor.y]);
+    if (snap) this.firstLock = false;
+    this.smoother.syncRelative(this.rawRel);
 
-    const relSmooth = this.smoothRel || this.rawRel;
-    const relRaw = this.rawRel || this.smoothRel;
-    const speed = Math.hypot(this.tipVel?.x || 0, this.tipVel?.y || 0);
-    const rel = this.blendRelativeCloud(relSmooth, relRaw, speed);
-    const tipRigid = rel.map(([x, y]) => [x + tx, y + ty]);
-    const pierce = this.stickyPierce(this.holdTip);
-    if (pierce && tipRigid[PIERCING_INDEX]) {
-      tipRigid[PIERCING_INDEX] = [pierce.x, pierce.y];
+    const landmarks = this.smoother.compose(anchor, this.rawRel);
+    const pierce = this.stickyPierce(anchor);
+    if (pierce && landmarks[PIERCING_INDEX]) {
+      landmarks[PIERCING_INDEX] = [pierce.x, pierce.y];
     }
 
     this.overlay = {
-      tip: this.holdTip,
+      tip: { x: anchor.x, y: anchor.y },
       box: result.box,
-      landmarks: tipRigid,
+      landmarks,
       side: result.side,
       pierce,
     };
     const ms = performance.now() - tPipe;
+    this.lastHeavyMs = ms;
     this.pipeMsEma = this.pipeMsEma ? this.pipeMsEma * 0.85 + ms * 0.15 : ms;
+    this.lastInferDoneTs = performance.now();
+    this.adaptInferenceLoad();
   }
 
   captureTipPatch(tx, ty) {
@@ -753,24 +863,33 @@ export class EarTryOnPipeline {
     );
     const rw = region.width;
     const tpl = this.tipPatch.g;
+    const grayAt = (ox, oy, px, py) => {
+      const i = ((oy + py) * rw + (ox + px)) * 4;
+      return (
+        0.299 * region.data[i] +
+        0.587 * region.data[i + 1] +
+        0.114 * region.data[i + 2]
+      );
+    };
+    const sadAt = (ox, oy) => {
+      let sad = 0;
+      for (let py = 0; py < this.TIP_PATCH; py++) {
+        for (let px = 0; px < this.TIP_PATCH; px++) {
+          sad += Math.abs(grayAt(ox, oy, px, py) - tpl[py * this.TIP_PATCH + px]);
+        }
+      }
+      return sad;
+    };
+
     let best = Infinity;
     let bx = cx;
     let by = cy;
     const limX = x2 - x1;
     const limY = y2 - y1;
-    for (let oy = 0; oy <= limY; oy++) {
-      for (let ox = 0; ox <= limX; ox++) {
-        let sad = 0;
-        for (let py = 0; py < this.TIP_PATCH; py++) {
-          for (let px = 0; px < this.TIP_PATCH; px++) {
-            const i = ((oy + py) * rw + (ox + px)) * 4;
-            const gv =
-              0.299 * region.data[i] +
-              0.587 * region.data[i + 1] +
-              0.114 * region.data[i + 2];
-            sad += Math.abs(gv - tpl[py * this.TIP_PATCH + px]);
-          }
-        }
+    const step = this.TIP_COARSE || 2;
+    for (let oy = 0; oy <= limY; oy += step) {
+      for (let ox = 0; ox <= limX; ox += step) {
+        const sad = sadAt(ox, oy);
         if (sad < best) {
           best = sad;
           bx = x1 + ox + half;
@@ -778,25 +897,24 @@ export class EarTryOnPipeline {
         }
       }
     }
-    let dx = bx - this.holdTip.x;
-    let dy = by - this.holdTip.y;
-    const step = Math.hypot(dx, dy);
-    if (step > this.TIP_SEARCH) return this.holdTip;
-    if (step < TIP_DEADZONE_PX) return this.holdTip;
-    if (step > TIP_MAX_STEP_PX) {
-      const s = TIP_MAX_STEP_PX / Math.max(step, 1e-6);
-      dx *= s;
-      dy *= s;
-      bx = this.holdTip.x + dx;
-      by = this.holdTip.y + dy;
+    const rx0 = Math.max(0, bx - half - x1 - step);
+    const ry0 = Math.max(0, by - half - y1 - step);
+    const rx1 = Math.min(limX, bx - half - x1 + step);
+    const ry1 = Math.min(limY, by - half - y1 + step);
+    for (let oy = ry0; oy <= ry1; oy++) {
+      for (let ox = rx0; ox <= rx1; ox++) {
+        const sad = sadAt(ox, oy);
+        if (sad < best) {
+          best = sad;
+          bx = x1 + ox + half;
+          by = y1 + oy + half;
+        }
+      }
     }
-    if (!this.tipVel) this.tipVel = { x: 0, y: 0 };
-    this.tipVel.x = 0.7 * this.tipVel.x + 0.3 * dx;
-    this.tipVel.y = 0.7 * this.tipVel.y + 0.3 * dy;
-    return {
-      x: bx + this.tipVel.x * 0.18,
-      y: by + this.tipVel.y * 0.18,
-    };
+    const dist = Math.hypot(bx - this.holdTip.x, by - this.holdTip.y);
+    if (dist > this.TIP_SEARCH) return this.holdTip;
+    if (best > this.TIP_PATCH * this.TIP_PATCH * 45) return this.holdTip;
+    return { x: bx, y: by };
   }
 
   paintVideo() {
@@ -807,7 +925,7 @@ export class EarTryOnPipeline {
       this.canvas.width = vw;
       this.canvas.height = vh;
     }
-    if (MIRROR_FEED) {
+    if (this.mirrorFeed) {
       this.ctx.save();
       this.ctx.translate(vw, 0);
       this.ctx.scale(-1, 1);
@@ -821,7 +939,7 @@ export class EarTryOnPipeline {
 
   clampFps(v) {
     if (!Number.isFinite(v) || v <= 0) return 0;
-    return Math.max(CAM_FPS_MIN, Math.min(CAM_FPS_MAX, v));
+    return Math.max(this.fpsMin, Math.min(this.fpsMax, v));
   }
 
   onDisplayTick(ts) {
@@ -838,51 +956,65 @@ export class EarTryOnPipeline {
     this.lastTs = ts;
     this.frameIdx++;
 
-    if (
-      !this.transferring &&
-      (this.holdTip || this.tip) &&
+    const earLocked = !!(
+      this.rawRel &&
+      !this.firstLock &&
       this.side &&
       this.geo &&
-      (this.smoothRel || this.rawRel)
-    ) {
-      if (!this.tipPatch && this.holdTip)
-        this.tipPatch = this.captureTipPatch(this.holdTip.x, this.holdTip.y);
-      const prev = this.holdTip;
-      const tracked = this.trackTipOnCanvas();
-      if (tracked) {
-        if (prev && this.geo) {
-          this.geo = {
-            cx: this.geo.cx + (tracked.x - prev.x),
-            cy: this.geo.cy + (tracked.y - prev.y),
-            side: this.geo.side,
-          };
-        }
+      (this.holdTip || this.tip)
+    );
+    if (earLocked) {
+      const prev = this.holdTip || this.tip;
+      let tracked = prev;
+      const anchor = this.lastYoloTip || prev;
+      this.tipVelX *= 0.92;
+      this.tipVelY *= 0.92;
+      const pull = 0.35;
+      let stepX =
+        this.tipVelX * dt + (anchor.x - prev.x) * pull * Math.min(1, dt * 25);
+      let stepY =
+        this.tipVelY * dt + (anchor.y - prev.y) * pull * Math.min(1, dt * 25);
+      const step = Math.hypot(stepX, stepY);
+      const maxStep = Math.min(18, (this.geo?.side || 80) * 0.1);
+      if (step > maxStep && step > 1e-6) {
+        stepX *= maxStep / step;
+        stepY *= maxStep / step;
+      }
+      tracked = { x: prev.x + stepX, y: prev.y + stepY };
+      if (Math.hypot(tracked.x - prev.x, tracked.y - prev.y) > maxStep * 1.5) {
+        this.clearEarLock("tip_coast_abort");
+      } else if (tracked && prev && this.geo) {
+        this.geo = {
+          cx: this.geo.cx + (tracked.x - prev.x),
+          cy: this.geo.cy + (tracked.y - prev.y),
+          side: this.geo.side,
+        };
         this.holdTip = tracked;
         this.tip = tracked;
+        this.applyTipHold(
+          this.holdTip || this.tip,
+          this.side,
+          this.geo,
+          vw,
+          vh,
+          dt,
+          this.tipSnap
+        );
+        this.tipSnap = false;
       }
-      this.applyTipHold(
-        this.holdTip || this.tip,
-        this.side,
-        this.geo,
-        vw,
-        vh
-      );
-      this.tipSnap = false;
-      if (this.frameIdx % 6 === 0 && this.holdTip)
-        this.tipPatch = this.captureTipPatch(this.holdTip.x, this.holdTip.y);
-    } else if (this.transferring) {
+    } else if (this.overlay && (!this.rawRel || this.firstLock)) {
       this.overlay = null;
     }
 
     this.emitFrame(ts);
 
-    const inferGap = (1000 / this.targetFps) * 0.9;
-    if (
-      !this.processing &&
-      this.shgSession &&
-      ts - (this.lastInferKickTs || 0) >= inferGap
-    ) {
-      this.lastInferKickTs = ts;
+    if (!this.processing && this.shgSession) {
+      const now = performance.now();
+      const minGap = this.smoothMode
+        ? Math.max(80, Math.min(400, (this.lastHeavyMs || 200) * 0.4))
+        : 0;
+      if (this.lastInferStartTs && now - this.lastInferStartTs < minGap) return;
+      this.lastInferStartTs = now;
       this.processing = true;
       this.processFrame(vw, vh, dt)
         .catch((e) => this.onStatus(`Infer error: ${e?.message || e}`))
@@ -904,6 +1036,10 @@ export class EarTryOnPipeline {
         fps: this.fpsEma,
         pipeMs: this.pipeMsEma,
         inferMs: this.inferMsEma,
+        profile: this.profileName,
+        yoloEvery: this.yoloEvery,
+        shgEvery: this.shgEvery,
+        targetFps: this.targetFps,
         dt: this.lastTs ? DT_FALLBACK : DT_FALLBACK,
       });
     }
@@ -915,7 +1051,14 @@ export class EarTryOnPipeline {
     const want = this.targetFps;
     const interval = 1000 / want;
     if (this.lastDrawTs && ts - this.lastDrawTs < interval - 0.5) return;
-    this.lastDrawTs = ts;
+    if (this.lastDrawTs) {
+      const elapsed = ts - this.lastDrawTs;
+      const steps = Math.max(1, Math.floor(elapsed / interval));
+      this.lastDrawTs += steps * interval;
+      if (ts - this.lastDrawTs > interval) this.lastDrawTs = ts;
+    } else {
+      this.lastDrawTs = ts;
+    }
     this.onDisplayTick(ts);
   };
 
@@ -926,34 +1069,75 @@ export class EarTryOnPipeline {
       return;
     }
     const wantFps = this.targetFps;
+    const w = this.camWidth;
+    const h = this.camHeight;
+    const sizeFps = {
+      width: { ideal: w },
+      height: { ideal: h },
+      frameRate: { ideal: wantFps, max: this.fpsMax },
+    };
     try {
-      this.onStatus("Requesting camera…");
-      this.stream = await navigator.mediaDevices.getUserMedia({
-        audio: false,
-        video: {
-          facingMode: "user",
-          width: { ideal: CAM_WIDTH },
-          height: { ideal: CAM_HEIGHT },
-          frameRate: { ideal: wantFps, min: CAM_FPS_MIN, max: CAM_FPS_MAX },
-        },
-      });
-    } catch (e) {
+      this.onStatus("Requesting front camera…");
       try {
         this.stream = await navigator.mediaDevices.getUserMedia({
           audio: false,
-          video: { facingMode: "user", width: { ideal: CAM_WIDTH }, height: { ideal: CAM_HEIGHT } },
+          video: { facingMode: { exact: "user" }, ...sizeFps },
         });
-      } catch (e2) {
-        this.onStatus(`Camera error: ${e2?.name || e2}`);
-        throw e2;
+      } catch (_) {
+        try {
+          this.stream = await navigator.mediaDevices.getUserMedia({
+            audio: false,
+            video: { facingMode: { ideal: "user" }, ...sizeFps },
+          });
+        } catch (_) {
+          const devices = await navigator.mediaDevices.enumerateDevices();
+          const cams = devices.filter((d) => d.kind === "videoinput");
+          const front =
+            cams.find((d) => /front|user|face|selfie/i.test(d.label || "")) ||
+            cams.find(
+              (d) => !/back|rear|environment|world|ultra/i.test(d.label || "")
+            );
+          this.stream = await navigator.mediaDevices.getUserMedia({
+            audio: false,
+            video: front?.deviceId
+              ? { deviceId: { exact: front.deviceId }, ...sizeFps }
+              : { facingMode: "user", ...sizeFps },
+          });
+        }
       }
+    } catch (e2) {
+      this.onStatus(`Camera error: ${e2?.name || e2}`);
+      throw e2;
     }
     this.video.srcObject = this.stream;
     this.video.style.display = "none";
     await this.video.play();
+    try {
+      const s = this.stream.getVideoTracks()[0]?.getSettings?.() || {};
+      const facing = String(s.facingMode || "user").toLowerCase();
+      this.mirrorFeed = facing !== "environment";
+      if (facing === "environment") {
+        for (const t of this.stream.getTracks()) t.stop();
+        this.stream = await navigator.mediaDevices.getUserMedia({
+          audio: false,
+          video: { facingMode: { ideal: "user" }, ...sizeFps },
+        });
+        this.video.srcObject = this.stream;
+        await this.video.play();
+        const s2 = this.stream.getVideoTracks()[0]?.getSettings?.() || {};
+        this.mirrorFeed =
+          String(s2.facingMode || "user").toLowerCase() !== "environment";
+      }
+    } catch (_) {
+      this.mirrorFeed = true;
+    }
     this.live = true;
     this.resetTracking();
-    this.onStatus("Live — show a clear SIDE PROFILE of one ear");
+    if (this.perfScaler) this.perfScaler.reset();
+    this.onStatus(
+      `Live · ${this.profileLabel || this.profileName} · ${wantFps} fps · ` +
+        `Y/${this.yoloEvery} S/${this.shgEvery} — show SIDE PROFILE of one ear`
+    );
     this.rafId = 0;
     this.rafId = requestAnimationFrame(this.loopLive);
   }

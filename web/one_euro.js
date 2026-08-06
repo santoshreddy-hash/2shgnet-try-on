@@ -155,14 +155,9 @@ export class OneEuroLandmarks {
       const med = speeds[Math.floor(speeds.length / 2)];
       const release = this.restSpeedPx * this.restReleaseMult;
 
+      // Rest freeze only damps tip-relative shape jitter — tip is never frozen.
       if (this.frozen) {
         if (med < release) {
-          for (let i = 0; i < n; i++) {
-            this.fx[i].xPrev = this.lastOut[i][0];
-            this.fy[i].xPrev = this.lastOut[i][1];
-            this.fx[i].dxPrev = 0;
-            this.fy[i].dxPrev = 0;
-          }
           return this.lastOut.map((p) => [p[0], p[1]]);
         }
         this.frozen = false;
@@ -171,12 +166,6 @@ export class OneEuroLandmarks {
         this.restFrames++;
         if (this.restFrames >= this.restHoldFrames) {
           this.frozen = true;
-          for (let i = 0; i < n; i++) {
-            this.fx[i].xPrev = this.lastOut[i][0];
-            this.fy[i].xPrev = this.lastOut[i][1];
-            this.fx[i].dxPrev = 0;
-            this.fy[i].dxPrev = 0;
-          }
           return this.lastOut.map((p) => [p[0], p[1]]);
         }
       } else {
@@ -195,12 +184,44 @@ export class OneEuroLandmarks {
     return out;
   }
 
-  /** Smooth shape in tip-relative space; output stays locked to tip. */
+  /** Smooth tip-relative offsets only; reconstruct with live tip (never lag tip). */
   updateRelative(pts, tip, dt, side = null, { maxStepPx = 42, snap = false } = {}) {
     const tx = tip.x ?? tip[0];
     const ty = tip.y ?? tip[1];
     const rel = pts.map(([x, y]) => [x - tx, y - ty]);
-    const relSmooth = this.update(rel, dt, side, { maxStepPx, snap });
+    const relSmooth = this.filterOffsets(rel, dt, side, { maxStepPx, snap });
     return relSmooth.map(([x, y]) => [x + tx, y + ty]);
+  }
+
+  /** One Euro on tip-relative offsets only (shape). */
+  filterOffsets(rel, dt, side = null, { maxStepPx = 42, snap = false } = {}) {
+    return this.update(rel, dt, side, { maxStepPx, snap });
+  }
+
+  /** landmarks = latestTip + offsets (zero tip latency). */
+  compose(tip, rel) {
+    const tx = tip.x ?? tip[0];
+    const ty = tip.y ?? tip[1];
+    return rel.map(([x, y]) => [x + tx, y + ty]);
+  }
+
+  /**
+   * Align filter state to a tip-relative shape without introducing lag.
+   * Used by rigid tip-hold so the next SHG update doesn't jump.
+   */
+  syncRelative(rel) {
+    const n = Math.min(rel.length, this.n);
+    this.lastOut = new Array(n);
+    for (let i = 0; i < n; i++) {
+      const x = rel[i][0];
+      const y = rel[i][1];
+      this.lastOut[i] = [x, y];
+      this.fx[i].xPrev = x;
+      this.fy[i].xPrev = y;
+      this.fx[i].dxPrev = 0;
+      this.fy[i].dxPrev = 0;
+    }
+    this.restFrames = 0;
+    this.frozen = false;
   }
 }

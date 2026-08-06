@@ -5,7 +5,8 @@
   "description": "Browser WASM demo for SHGNet-56 ONNX ear landmarks",
   "type": "module",
   "scripts": {
-    "start": "node server.mjs"
+    "start": "node server.mjs",
+    "mobile": "node mobile.mjs"
   },
   "dependencies": {
     "onnxruntime-web": "^1.20.0"

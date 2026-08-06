@@ -42,6 +42,9 @@ function resolveUrl(urlPath) {
   if (clean === "/one_euro_settings.json") {
     return path.join(ROOT, "one_euro_settings.json");
   }
+  if (clean === "/performance_profiles.json") {
+    return path.join(ROOT, "performance_profiles.json");
+  }
   if (clean.startsWith("/models/")) {
     return path.join(ROOT, clean.slice(1));
   }

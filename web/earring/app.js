@@ -146,8 +146,13 @@ pipe.onOverlay = (overlay, meta) => {
   const pipeMs = meta?.pipeMs ? meta.pipeMs.toFixed(0) : "-";
   const drag = physics.dragging ? " · dragging" : "";
   const lock = lastPierce ? "locked #56" : "find side profile";
+  const prof = meta?.profile ? ` · ${meta.profile}` : "";
+  const cadence =
+    meta?.yoloEvery && meta?.shgEvery
+      ? ` · Y/${meta.yoloEvery} S/${meta.shgEvery}`
+      : "";
   statusEl.textContent =
-    `${pipe.live ? "LIVE" : "Idle"} ${fps} fps · pipe ${pipeMs} ms${drag}\n` +
+    `${pipe.live ? "LIVE" : "Idle"} ${fps}/${meta?.targetFps || "-"} fps${prof}${cadence} · pipe ${pipeMs} ms${drag}\n` +
     `${sprite?.name || "Earring"} · ${lock}\n` +
     `Swing ${physics.mode} · freedom ${physics.freedom.toFixed(2)}`;
 };

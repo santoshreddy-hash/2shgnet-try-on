@@ -1,0 +1,10 @@
+{
+  "name": "fps",
+  "private": true,
+  "scripts": {
+    "start": "npm --prefix web start",
+    "mobile": "npm --prefix web run mobile",
+    "prepare:vercel": "node scripts/prepare-vercel.mjs",
+    "deploy": "npm run prepare:vercel && rm -rf .vercel-out/.vercel && cd .vercel-out && npx --yes vercel@latest link --yes --project fps-ear-landmarks --scope myproj3 && npx --yes vercel@latest deploy --yes --prod"
+  }
+}

@@ -1,58 +1,57 @@
+import { yieldToPaint } from "./yield.js";
+
 /**
  * Ultralytics YOLO pose ONNX in the browser.
  *
  * Supports:
  *   A) Raw export  (1, 56, N) — cx,cy,w,h,score + 17×(x,y,v)  [current models]
  *   B) NMS export  (1, 300, 57) or (1, 57, N) — xyxy,conf,cls + 17×(x,y,c)
- *
- * Ear pick matches desktop EarCropper._pick_ear: soft prefer_side, switch when
- * the other ear wins (no hard lock that freezes landmarks across head turns).
  */
 const NOSE = 0;
 const LEFT_EYE = 1;
 const RIGHT_EYE = 2;
 const LEFT_EAR = 3;
 const RIGHT_EAR = 4;
-const EAR_MIN_CONF = 0.3;
 
 export class YoloPoseBrowser {
   /**
    * @param {import('onnxruntime-web').InferenceSession} session
    * @param {(data:Float32Array,dims:number[]) => any} makeTensor
    */
-  constructor(session, makeTensor, imgsz = 640, conf = 0.22) {
+  constructor(session, makeTensor, imgsz = 640, conf = 0.25) {
     this.session = session;
     this.makeTensor = makeTensor;
     this.inputName = session.inputNames[0];
-    this.imgsz = imgsz;
+    this.imgsz = 640;
     this.conf = conf;
     this._canvas = document.createElement("canvas");
-    this._canvas.width = imgsz;
-    this._canvas.height = imgsz;
+    this._canvas.width = 640;
+    this._canvas.height = 640;
     this._ctx = this._canvas.getContext("2d", { willReadFrequently: true });
+    this._chw = new Float32Array(3 * 640 * 640);
     this.busy = false;
     this.last = null;
-    this.preferSide = null; // "LEFT" | "RIGHT" | null
+    this.lastMs = 0;
+    /** When true, yield to paint between preprocess and WASM run. */
+    this.yieldBeforeRun = false;
   }
 
-  /**
-   * @param {CanvasImageSource} source
-   * @param {{ preferSide?: string|null }} [opts]
-   */
-  async detect(source, opts = {}) {
-    // Never return a stale detection — that freezes landmarks on the old ear
-    if (this.busy) return null;
+  setImgsz(_imgsz) {
+    // ONNX is fixed 640×640
+    this.imgsz = 640;
+    this._canvas.width = 640;
+    this._canvas.height = 640;
+    this._chw = new Float32Array(3 * 640 * 640);
+  }
+
+  async detect(source) {
+    if (this.busy) return this.last;
     this.busy = true;
+    const t0 = performance.now();
     try {
-      if (opts.preferSide !== undefined) {
-        this.preferSide = opts.preferSide;
-      }
       const vw = source.videoWidth || source.width;
       const vh = source.videoHeight || source.height;
-      if (!vw || !vh) {
-        this.last = null;
-        return null;
-      }
+      if (!vw || !vh) return this.last;
 
       const r = Math.min(this.imgsz / vh, this.imgsz / vw);
       const nw = Math.round(vw * r);
@@ -65,12 +64,16 @@ export class YoloPoseBrowser {
 
       const { data } = this._ctx.getImageData(0, 0, this.imgsz, this.imgsz);
       const plane = this.imgsz * this.imgsz;
-      const chw = new Float32Array(3 * plane);
+      const chw = this._chw;
+      const inv = 1 / 255;
       for (let i = 0, p = 0; i < data.length; i += 4, p++) {
-        chw[p] = data[i] / 255;
-        chw[plane + p] = data[i + 1] / 255;
-        chw[2 * plane + p] = data[i + 2] / 255;
+        chw[p] = data[i] * inv;
+        chw[plane + p] = data[i + 1] * inv;
+        chw[2 * plane + p] = data[i + 2] * inv;
       }
+
+      if (this.yieldBeforeRun) await yieldToPaint();
+
       const tensor = this.makeTensor(chw, [1, 3, this.imgsz, this.imgsz]);
       const out = await this.session.run({ [this.inputName]: tensor });
       const tensorOut = out[this.session.outputNames[0]];
@@ -81,7 +84,6 @@ export class YoloPoseBrowser {
 
       let best = null;
 
-      // A) Raw Ultralytics pose: (1, 56, N)
       if (dims.length === 3 && dims[1] === 56) {
         const nDet = dims[2];
         const get = (c, i) => arr[c * nDet + i];
@@ -109,7 +111,6 @@ export class YoloPoseBrowser {
           best = { kpt, bbox: [x1, y1, x2, y2], conf: bestScore };
         }
       } else {
-        // B) NMS-style (1, N, 57) or (1, 57, N)
         let nDet = 300;
         let get = (i, c) => arr[i * 57 + c];
         if (dims.length === 3 && dims[1] === 57) {
@@ -152,19 +153,39 @@ export class YoloPoseBrowser {
       const rightEye = best.kpt(RIGHT_EYE);
       const [x1, y1, x2, y2] = best.bbox;
 
-      const picked = this._pickEar(left, right, nose);
-      if (!picked) {
+      let side;
+      if (left.c >= 0.25 || right.c >= 0.25) {
+        side = left.c >= right.c ? "LEFT" : "RIGHT";
+      } else {
+        side =
+          Math.abs(left.x - nose.x) >= Math.abs(right.x - nose.x)
+            ? "LEFT"
+            : "RIGHT";
+      }
+      const ear = side === "LEFT" ? left : right;
+      const other = side === "LEFT" ? right : left;
+      if (ear.c < 0.25) {
         this.last = null;
         return null;
       }
-      const { side, ear, other } = picked;
+      if (other.c >= 0.5 && other.c >= ear.c * 0.85) {
+        this.last = null;
+        return null;
+      }
+      if (nose.c >= 0.2) {
+        const dx = Math.abs(ear.x - nose.x);
+        const d = Math.hypot(ear.x - nose.x, ear.y - nose.y);
+        if (dx < 22 || d < 28) {
+          this.last = null;
+          return null;
+        }
+      }
 
       let eyeDist = null;
       if (leftEye.c >= 0.2 && rightEye.c >= 0.2) {
         eyeDist = Math.hypot(leftEye.x - rightEye.x, leftEye.y - rightEye.y);
       }
 
-      this.preferSide = side;
       this.last = {
         side,
         ear,
@@ -184,49 +205,8 @@ export class YoloPoseBrowser {
       this.last = null;
       return null;
     } finally {
+      this.lastMs = performance.now() - t0;
       this.busy = false;
     }
-  }
-
-  /** Soft prefer_side; switch when the opposite ear clearly wins. */
-  _pickEar(left, right, nose) {
-    const prefer = (this.preferSide || "").toUpperCase();
-    const isProfile = (ear, other, name) => {
-      if (ear.c < EAR_MIN_CONF) return false;
-      // Mid-turn / frontal: both ears visible → reject (no face landmarks)
-      if (other.c >= 0.38 && other.c >= ear.c * 0.72) return false;
-      if (nose?.c >= 0.2) {
-        const dx = Math.abs(ear.x - nose.x);
-        const d = Math.hypot(ear.x - nose.x, ear.y - nose.y);
-        if (dx < 22 || d < 28) return false;
-      }
-      return true;
-    };
-
-    const cands = [];
-    for (const [ear, other, name] of [
-      [left, right, "LEFT"],
-      [right, left, "RIGHT"],
-    ]) {
-      if (!isProfile(ear, other, name)) continue;
-      let score = ear.c;
-      if (prefer === name) score += 0.08;
-      cands.push({ score, side: name, ear, other });
-    }
-    if (!cands.length) {
-      // Last resort: higher-conf ear even if profile gate failed
-      for (const [ear, other, name] of [
-        [left, right, "LEFT"],
-        [right, left, "RIGHT"],
-      ]) {
-        if (ear.c < EAR_MIN_CONF) continue;
-        let score = ear.c;
-        if (prefer === name) score += 0.05;
-        cands.push({ score, side: name, ear, other });
-      }
-    }
-    if (!cands.length) return null;
-    cands.sort((a, b) => b.score - a.score);
-    return cands[0];
   }
 }
