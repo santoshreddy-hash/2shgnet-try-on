@@ -1,0 +1,48 @@
+{
+  "step": 6,
+  "comparison": [
+    {
+      "model": "FP32_fused",
+      "onnx_mb": 25.279,
+      "infer_ms": 240.168,
+      "fps_est": 4.16,
+      "landmark_mean_px_vs_fp32": 0.0,
+      "pierce_px_vs_fp32": 0.0,
+      "error": null
+    },
+    {
+      "model": "FP16",
+      "onnx_mb": 12.724,
+      "infer_ms": 281.623,
+      "fps_est": 3.55,
+      "landmark_mean_px_vs_fp32": 0.0714,
+      "pierce_px_vs_fp32": 0.0,
+      "error": null
+    },
+    {
+      "model": "INT8",
+      "onnx_mb": 6.775,
+      "infer_ms": 167.472,
+      "fps_est": 5.97,
+      "landmark_mean_px_vs_fp32": 10.4405,
+      "pierce_px_vs_fp32": 17.8885,
+      "error": null
+    }
+  ],
+  "recommendations": {
+    "Desktop": {
+      "model": "FP32_fused",
+      "why": "Highest accuracy; deploy fused graph via ONNX Runtime (AVX)"
+    },
+    "Browser": {
+      "model": "FP16",
+      "why": "~2x smaller than FP32 with ~0.07px landmark drift; INT8 dynamic too lossy"
+    },
+    "Android_iPhone": {
+      "model": "FP16",
+      "why": "Use FP16 until calibrated static INT8; dynamic INT8 ~10px error"
+    }
+  },
+  "live_master_untouched": true,
+  "artifact_dir": "outputs/size_reduce"
+}

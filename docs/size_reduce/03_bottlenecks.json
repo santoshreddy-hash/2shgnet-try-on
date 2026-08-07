@@ -1,0 +1,72 @@
+{
+  "step": 3,
+  "top10": [
+    {
+      "layer": "pre.1.conv2.conv",
+      "calls": 20,
+      "mean_ms": 29.2974,
+      "sum_ms": 585.9474
+    },
+    {
+      "layer": "merge_feature.0.conv",
+      "calls": 20,
+      "mean_ms": 16.8285,
+      "sum_ms": 336.5696
+    },
+    {
+      "layer": "feature.0.0.conv2.conv",
+      "calls": 20,
+      "mean_ms": 15.4292,
+      "sum_ms": 308.5837
+    },
+    {
+      "layer": "hourglass.1.0.res.conv2.conv",
+      "calls": 20,
+      "mean_ms": 11.2001,
+      "sum_ms": 224.0016
+    },
+    {
+      "layer": "feature.1.0.conv2.conv",
+      "calls": 20,
+      "mean_ms": 9.9958,
+      "sum_ms": 199.9166
+    },
+    {
+      "layer": "pre.4.conv2.conv",
+      "calls": 20,
+      "mean_ms": 9.8149,
+      "sum_ms": 196.298
+    },
+    {
+      "layer": "hourglass.0.0.res.conv2.conv",
+      "calls": 20,
+      "mean_ms": 9.451,
+      "sum_ms": 189.0205
+    },
+    {
+      "layer": "pre.2",
+      "calls": 20,
+      "mean_ms": 7.5039,
+      "sum_ms": 150.0783
+    },
+    {
+      "layer": "pre.1.conv3.conv",
+      "calls": 20,
+      "mean_ms": 7.3948,
+      "sum_ms": 147.8958
+    },
+    {
+      "layer": "feature.0.0.conv3.conv",
+      "calls": 20,
+      "mean_ms": 7.0766,
+      "sum_ms": 141.5314
+    }
+  ],
+  "conv_sum_ms_in_top": 3185.886,
+  "bn_sum_ms_in_top": 94.111,
+  "recommendation": "Conv2d dominates; fuse Conv+BatchNorm to cut BN ops and memory bandwidth. Hourglass residual stacks are the structural hotspot.",
+  "bn_vs_conv_hint": {
+    "conv_fraction_of_top_sum": 0.915,
+    "bn_fraction_of_top_sum": 0.027
+  }
+}

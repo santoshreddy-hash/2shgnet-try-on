@@ -1,0 +1,36 @@
+{
+  "step": 5,
+  "fp32_onnx": {
+    "infer_ms_mean": 240.168,
+    "infer_ms_p50": 225.794,
+    "fps_est": 4.16,
+    "size_mb": 25.279,
+    "path": "outputs/size_reduce/SHGNet-56_fused_fp32.onnx"
+  },
+  "fp16_onnx": {
+    "infer_ms_mean": 281.623,
+    "infer_ms_p50": 245.013,
+    "fps_est": 3.55,
+    "size_mb": 12.724,
+    "path": "outputs/size_reduce/SHGNet-56_fp16.onnx",
+    "accuracy_vs_fp32": {
+      "mean_px": 0.0714,
+      "max_px": 4.0,
+      "pierce_px": 0.0,
+      "crop": "/Users/santoshreddy/Desktop/master copy/outputs/smoke/image_pipeline/04_ear_crop_256.png"
+    }
+  },
+  "int8_onnx": {
+    "infer_ms_mean": 167.472,
+    "infer_ms_p50": 161.268,
+    "fps_est": 5.97,
+    "size_mb": 6.775,
+    "path": "outputs/size_reduce/SHGNet-56_int8.onnx",
+    "accuracy_vs_fp32": {
+      "mean_px": 10.4405,
+      "max_px": 138.8524,
+      "pierce_px": 17.8885,
+      "crop": "/Users/santoshreddy/Desktop/master copy/outputs/smoke/image_pipeline/04_ear_crop_256.png"
+    }
+  }
+}

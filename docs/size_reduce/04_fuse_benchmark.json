@@ -1,0 +1,14 @@
+{
+  "step": 4,
+  "n_fused_conv_bn_pairs": 65,
+  "heatmap_max_abs_diff": 1.735985279083252e-06,
+  "heatmap_mean_abs_diff": 1.0555064733352992e-07,
+  "infer_ms_fp32": 193.479,
+  "infer_ms_fused_fp32": 506.854,
+  "speedup_x": 0.382,
+  "fused_pth_mb": 32.427,
+  "fused_onnx_mb": 25.279,
+  "fused_pth": "outputs/size_reduce/SHGNet-56_fused_fp32.pth",
+  "fused_onnx": "outputs/size_reduce/SHGNet-56_fused_fp32.onnx",
+  "accuracy_note": "Same compute graph numerically within float noise after fusion"
+}

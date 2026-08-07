@@ -1,0 +1,9 @@
+{
+  "step": 1,
+  "master_backup": "outputs/size_reduce/SHGNet-56_final_fp32_master.pth",
+  "master_mb": 32.677,
+  "live_checkpoint": "models/shgnet/SHGNet-56_final.pth",
+  "live_mb": 32.677,
+  "identical_to_live": true,
+  "note": "Original FP32 master preserved; later steps write only under outputs/size_reduce/"
+}
