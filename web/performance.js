@@ -3,7 +3,7 @@
  * (`performance_profiles.json`). Detects high / medium / low.
  *
  * Quality is frozen (640×360, LEFT flip rules, crop). All tiers target ~25 FPS
- * with SHG every 1 (max 2 under load). Tip-hold keeps UI smooth with no lag.
+ * with sparse SHG under WASM load. Tip LK + LandmarkStick glue like desktop.
  */
 
 const FPS_MIN = 20;
@@ -57,8 +57,8 @@ const DEFAULT_PROFILES = {
       camera_height: 360,
       process_width: 640,
       process_height: 360,
-      yolo_every: 1,
-      shg_every: 1,
+      yolo_every: 2,
+      shg_every: 3,
       fps_max: 25,
       yolo_imgsz: 640,
     },
@@ -69,8 +69,8 @@ const DEFAULT_PROFILES = {
       camera_height: 360,
       process_width: 640,
       process_height: 360,
-      yolo_every: 1,
-      shg_every: 1,
+      yolo_every: 2,
+      shg_every: 4,
       fps_max: 25,
       yolo_imgsz: 640,
     },
@@ -81,16 +81,16 @@ const DEFAULT_PROFILES = {
       camera_height: 360,
       process_width: 640,
       process_height: 360,
-      yolo_every: 1,
-      shg_every: 1,
+      yolo_every: 3,
+      shg_every: 5,
       fps_max: 25,
       yolo_imgsz: 640,
     },
   },
   browser: {
-    high: { shg_every: 1, shg_every_max: 2, target_fps: 25, yolo_imgsz: 640 },
-    medium: { shg_every: 1, shg_every_max: 2, target_fps: 25, yolo_imgsz: 640 },
-    low: { shg_every: 1, shg_every_max: 2, target_fps: 25, yolo_imgsz: 640 },
+    high: { shg_every: 3, shg_every_max: 8, yolo_every: 2, target_fps: 25, yolo_imgsz: 640 },
+    medium: { shg_every: 4, shg_every_max: 8, yolo_every: 2, target_fps: 25, yolo_imgsz: 640 },
+    low: { shg_every: 5, shg_every_max: 10, yolo_every: 3, target_fps: 25, yolo_imgsz: 640 },
   },
   camera_ladder: [{ width: 640, height: 360 }],
 };
@@ -113,8 +113,31 @@ export async function loadPerformanceConfig() {
   return cachedRaw;
 }
 
+function isDesktopOs() {
+  if (typeof navigator === "undefined") return false;
+  const ua = navigator.userAgent || "";
+  const p = navigator.platform || "";
+  // Real phones/tablets in UA — not desktop
+  if (/Android|iPhone|iPad|iPod|Mobile|webOS|BlackBerry|IEMobile|Opera Mini/i.test(ua))
+    return false;
+  // iPadOS 13+ desktop UA still has Mac — touch + no hover
+  if (
+    /Macintosh/i.test(ua) &&
+    typeof navigator.maxTouchPoints === "number" &&
+    navigator.maxTouchPoints > 1 &&
+    typeof matchMedia === "function" &&
+    matchMedia("(pointer: coarse)").matches
+  ) {
+    return false;
+  }
+  return /Mac|Win|Linux|CrOS/i.test(p) || /Macintosh|Windows NT|X11|CrOS/i.test(ua);
+}
+
 function isMobileLike() {
   if (typeof navigator === "undefined") return false;
+  // Desktop Mac/Windows/Linux must never be capped as mobile (narrow IDE panels,
+  // coarse pointers in embedded browsers falsely triggered medium).
+  if (isDesktopOs()) return false;
   const ua = navigator.userAgent || "";
   if (/Android|iPhone|iPad|iPod|Mobile|webOS|BlackBerry|IEMobile|Opera Mini/i.test(ua))
     return true;
@@ -169,8 +192,8 @@ export function classifyBrowserCapability(signals, cfg = {}) {
   if (deviceMemoryGb > 0) {
     score += Math.min(deviceMemoryGb / minMem, 1.5) * 30;
   } else {
-    // Safari/Firefox often omit deviceMemory — mild prior, not a free high boost
-    score += mobile ? 10 : 16;
+    // Safari/Firefox often omit deviceMemory — desktop prior keeps strong CPUs at high
+    score += mobile ? 10 : 22;
   }
   if (webgpu) score += webgpuBonus;
   if (mobile) score -= 12;
@@ -185,6 +208,14 @@ export function classifyBrowserCapability(signals, cfg = {}) {
   } else if (cores <= lowMaxCores && score < mediumMinScore) {
     recommended = "low";
     reasons.push(`weak CPU cores=${cores} score=${score.toFixed(0)}`);
+  } else if (
+    // Strong desktop CPU (≥6 cores) → high (matches desktop CoreML/auto path)
+    !mobile &&
+    cores >= minCores &&
+    (deviceMemoryGb <= 0 || deviceMemoryGb >= minMem)
+  ) {
+    recommended = "high";
+    reasons.push(`CPU=${cores} mem=${deviceMemoryGb || "?"}GB score=${score.toFixed(0)}`);
   } else if (
     highIfWebgpu &&
     webgpu &&
@@ -315,16 +346,20 @@ export async function resolveBrowserPerformance(mode = "auto", opts = {}) {
   let slowdown = 1;
   if (!deferSlowdown) {
     slowdown = estimateCpuSlowdownFactor();
-    // Extreme throttle → demote only in auto mode (manual override always wins)
+    // Extreme throttle → demote only in auto mode (manual override always wins).
+    // Strong desktops (≥6 cores) stay high unless severely throttled (~6×+).
+    const strongCpu = (capability.cores || 0) >= 6 && !capability.mobile;
+    const demoteHighAt = strongCpu ? 6 : 3.5;
+    const demoteMedAt = strongCpu ? 8 : 5;
     if (!forced && slowdown >= 6) {
       name = "low";
       capability.recommended = "low";
       capability.detail = `${capability.detail}; cpu~${slowdown.toFixed(1)}x → low`;
-    } else if (!forced && slowdown >= 3.5 && name === "high") {
+    } else if (!forced && slowdown >= demoteHighAt && name === "high") {
       name = "medium";
       capability.recommended = "medium";
       capability.detail = `${capability.detail}; cpu~${slowdown.toFixed(1)}x → medium`;
-    } else if (!forced && slowdown >= 3.5 && name === "medium" && slowdown >= 5) {
+    } else if (!forced && slowdown >= demoteMedAt && name === "medium") {
       name = "low";
       capability.recommended = "low";
       capability.detail = `${capability.detail}; cpu~${slowdown.toFixed(1)}x → low`;
@@ -344,11 +379,12 @@ export async function resolveBrowserPerformance(mode = "auto", opts = {}) {
   const ladder = frozenLadder(raw, quality);
   const camW = ladder[0].width;
   const camH = ladder[0].height;
-  const shgEvery = Math.max(1, Number(d.shg_every) || 1);
-  // Cap at 2 so low devices stay result-matched (tip-hold fills the gap, no laggy stalls)
+  const shgEvery = Math.max(1, Number(d.shg_every) || 3);
+  // WASM SHG is slow (~hundreds of ms). Allow sparse cadence; LandmarkStick
+  // + tip LK glue landmarks between SHG (same role as desktop ONNX stick).
   const shgEveryMax = Math.min(
-    2,
-    Math.max(shgEvery, Number(d.shg_every_max) || 2)
+    12,
+    Math.max(shgEvery, Number(d.shg_every_max) || 8)
   );
 
   const profile = {
@@ -363,11 +399,11 @@ export async function resolveBrowserPerformance(mode = "auto", opts = {}) {
     processHeight: camH,
     inferWidth: camW,
     inferHeight: camH,
-    yoloEvery: 1,
+    yoloEvery: Math.max(1, Number(d.yolo_every) || 2),
     shgEvery,
-    yoloEveryMin: 1,
-    shgEveryMin: 1,
-    yoloEveryMax: 2,
+    yoloEveryMin: Math.max(1, Number(d.yolo_every) || 2),
+    shgEveryMin: shgEvery,
+    yoloEveryMax: Math.max(2, Number(d.yolo_every) || 2),
     shgEveryMax,
     yoloImgsz: 640,
     lockYolo: true,
@@ -518,7 +554,7 @@ export function describeWorkingPlan(profile, capability, oneEuro) {
     `Infer size ${profile.inferWidth || profile.cameraWidth}×${profile.inferHeight || profile.cameraHeight} (fixed)`,
     `Target ${profile.targetFps} FPS · YOLO every ${profile.yoloEvery} · SHG every ${profile.shgEvery} (max ${profile.shgEveryMax})`,
     `LEFT ear: adaptive flip verify on lock + every ${profile.leftFlipRecheckEvery || 8} SHG`,
-    `Tip-hold between SHG frames (smooth UI, no wait on WASM)`,
+    `Tip LK + LandmarkStick between SHG (desktop ONNX stick)`,
     `Workers: YOLO + SHGNet off main thread`,
   ];
   if (oneEuro) {
@@ -528,9 +564,9 @@ export function describeWorkingPlan(profile, capability, oneEuro) {
     );
   }
   if (tier === "high") {
-    lines.push("Plan: responsive One Euro + densest SHG refresh");
+    lines.push("Plan: responsive One Euro + landmark stick");
   } else if (tier === "medium") {
-    lines.push("Plan: jewellery-baseline One Euro + tip-hold under load");
+    lines.push("Plan: jewellery-baseline One Euro + stick under load");
   } else {
     lines.push("Plan: smoother One Euro for tip-hold / SHG every-2 under load");
   }
@@ -579,15 +615,18 @@ export function applyDeferredCpuSlowdown(capability) {
   const slowdown = estimateCpuSlowdownFactor();
   let name = capability?.applied || capability?.recommended || "medium";
   const forced = !!capability?.forced;
+  const strongCpu = (capability?.cores || 0) >= 6 && !capability?.mobile;
+  const demoteHighAt = strongCpu ? 6 : 3.5;
+  const demoteMedAt = strongCpu ? 8 : 5;
   let demoted = false;
   if (!forced) {
     if (slowdown >= 6 && name !== "low") {
       name = "low";
       demoted = true;
-    } else if (slowdown >= 3.5 && name === "high") {
+    } else if (slowdown >= demoteHighAt && name === "high") {
       name = "medium";
       demoted = true;
-    } else if (slowdown >= 5 && name === "medium") {
+    } else if (slowdown >= demoteMedAt && name === "medium") {
       name = "low";
       demoted = true;
     }
@@ -596,6 +635,8 @@ export function applyDeferredCpuSlowdown(capability) {
   next.cpuSlowdown = slowdown;
   next.slowdownPending = false;
   next.applied = name;
+  // Keep autoRecommended as the static device class; recommended = applied plan
+  if (!next.autoRecommended) next.autoRecommended = capability?.autoRecommended || capability?.recommended;
   next.recommended = name;
   if (demoted) {
     next.detail = `${next.detail || ""}; idle cpu~${slowdown.toFixed(1)}x → ${name}`;

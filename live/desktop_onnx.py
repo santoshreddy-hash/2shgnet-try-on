@@ -267,9 +267,9 @@ def track_tip_lk(
         ny = tip[1] + dy * s
     if step < 0.15:
         return tip, gray, False
-    # Soft blend toward LK (kills single-frame tip noise)
-    nx = 0.55 * tip[0] + 0.45 * nx
-    ny = 0.55 * tip[1] + 0.45 * ny
+    # Soft blend toward LK (kills single-frame tip noise; 0.85 shook landmarks)
+    nx = 0.35 * tip[0] + 0.65 * nx
+    ny = 0.35 * tip[1] + 0.65 * ny
     return (nx, ny), gray, True
 
 

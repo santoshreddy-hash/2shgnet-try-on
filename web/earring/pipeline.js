@@ -17,6 +17,7 @@ import {
 } from "../performance.js";
 import { yieldToPaint } from "../yield.js";
 import { OrtInferenceWorker } from "../ort_worker_client.js";
+import { TipLkTracker } from "../tip_lk.js";
 import {
   CROP_PAD,
   REFINE_PAD,
@@ -46,13 +47,13 @@ const NUM_LANDMARKS = 56;
 export { PIERCING_INDEX };
 
 const ONE_EURO_DEFAULTS = {
-  min_cutoff: 3.2,
-  beta: 1.1,
-  d_cutoff: 1.45,
-  rest_speed_px: 6.0,
-  rest_hold_frames: 1,
-  rest_release_mult: 1.15,
-  max_step_px: 110.0,
+  min_cutoff: 2.2,
+  beta: 1.25,
+  d_cutoff: 1.4,
+  rest_speed_px: 4.0,
+  rest_hold_frames: 2,
+  rest_release_mult: 1.3,
+  max_step_px: 40.0,
 };
 
 export class EarTryOnPipeline {
@@ -97,6 +98,7 @@ export class EarTryOnPipeline {
     this.mirrorFeed = MIRROR_DEFAULT;
     this.tipVelX = 0;
     this.tipVelY = 0;
+    this.tipLk = new TipLkTracker();
     this.lastTipTs = 0;
     this.lastInferStartTs = 0;
     this.yoloImgsz = 640;
@@ -150,11 +152,13 @@ export class EarTryOnPipeline {
     this.rawRel = null;
     this.firstLock = true;
     this.overlay = null;
+    this.tipLk?.reset();
     this.smoother.reset();
   }
 
   oneEuroMaxStep() {
-    return Math.max(1, Number(this.oneEuroCfg.max_step_px) || 42);
+    const v = Number(this.oneEuroCfg.max_step_px);
+    return Number.isFinite(v) ? Math.max(0, v) : 0;
   }
 
   async loadOneEuroSettings(tier = this.profileName) {
@@ -353,9 +357,37 @@ export class EarTryOnPipeline {
     this.lastYoloTip = null;
     this.tipVelX = 0;
     this.tipVelY = 0;
+    this.tipLk?.reset();
     this.tipSnap = true;
     this.side = null;
     if (reason) console.log(`[earring] clear lock: ${reason}`);
+  }
+
+  /** Soft YOLO tip merge — avoid fighting LK / shaking landmarks. */
+  adoptYoloTip(tipPt, { reseatLk = true } = {}) {
+    const prev = this.holdTip;
+    this.lastYoloTip = { x: tipPt.x, y: tipPt.y };
+    if (!prev) {
+      this.holdTip = { x: tipPt.x, y: tipPt.y };
+      this.tip = this.holdTip;
+      if (reseatLk) this.tipLk.reset();
+      this.tipSnap = true;
+      return this.holdTip;
+    }
+    const jump = Math.hypot(tipPt.x - prev.x, tipPt.y - prev.y);
+    if (jump > 10) {
+      this.holdTip = { x: tipPt.x, y: tipPt.y };
+      this.tip = this.holdTip;
+      if (reseatLk) this.tipLk.reset();
+      this.tipSnap = true;
+    } else if (jump > 1.5) {
+      this.holdTip = {
+        x: prev.x * 0.75 + tipPt.x * 0.25,
+        y: prev.y * 0.75 + tipPt.y * 0.25,
+      };
+      this.tip = this.holdTip;
+    }
+    return this.holdTip;
   }
 
   updateGeoFromYolo(yolo, vw, vh) {
@@ -396,9 +428,7 @@ export class EarTryOnPipeline {
       this.geo = { cx: r.cx, cy: r.cy, side: this.geo.side };
     }
     this.side = yolo.side;
-    this.tip = tipPt;
-    this.holdTip = { x: tipPt.x, y: tipPt.y };
-    this.lastYoloTip = { x: tipPt.x, y: tipPt.y };
+    this.adoptYoloTip(tipPt, { reseatLk: true });
     return true;
   }
 
@@ -535,9 +565,11 @@ export class EarTryOnPipeline {
     let { pts, score } = await this.runShg(preferFlip, ox, oy, sidePx);
     const lock = this.firstLock;
     let ok1 = landmarksOk(pts, tipPt, sidePx);
-    // LEFT: always compare both orientations (same as desktop quality freeze).
+    // Dual-flip only when needed — always-on LEFT compare doubled WASM latency.
     const shouldFlipCompare =
-      preferFlip || (lock && !ok1) || score < 0.12;
+      (preferFlip && (lock || !ok1 || score < 0.10)) ||
+      (lock && !ok1) ||
+      score < 0.08;
     if (shouldFlipCompare) {
       this.drawSquareCrop(source, cx, cy, sideLen, !preferFlip);
       const alt = await this.runShg(!preferFlip, ox, oy, sidePx);
@@ -739,6 +771,7 @@ export class EarTryOnPipeline {
         }
         this.lastYoloTip = { x: tipPt.x, y: tipPt.y };
         this.lastTipTs = now;
+        this.tipLk.reset();
       }
     }
 
@@ -965,24 +998,25 @@ export class EarTryOnPipeline {
     );
     if (earLocked) {
       const prev = this.holdTip || this.tip;
+      const lk = this.tipLk.update(this.ctx, prev);
       let tracked = prev;
-      const anchor = this.lastYoloTip || prev;
-      this.tipVelX *= 0.92;
-      this.tipVelY *= 0.92;
-      const pull = 0.35;
-      let stepX =
-        this.tipVelX * dt + (anchor.x - prev.x) * pull * Math.min(1, dt * 25);
-      let stepY =
-        this.tipVelY * dt + (anchor.y - prev.y) * pull * Math.min(1, dt * 25);
-      const step = Math.hypot(stepX, stepY);
-      const maxStep = Math.min(18, (this.geo?.side || 80) * 0.1);
-      if (step > maxStep && step > 1e-6) {
-        stepX *= maxStep / step;
-        stepY *= maxStep / step;
+      if (lk.ok) {
+        const step = Math.hypot(lk.x - prev.x, lk.y - prev.y);
+        if (step >= 0.45) tracked = { x: lk.x, y: lk.y };
       }
-      tracked = { x: prev.x + stepX, y: prev.y + stepY };
-      if (Math.hypot(tracked.x - prev.x, tracked.y - prev.y) > maxStep * 1.5) {
-        this.clearEarLock("tip_coast_abort");
+      if (
+        this.lastYoloTip &&
+        Math.hypot(tracked.x - this.lastYoloTip.x, tracked.y - this.lastYoloTip.y) >
+          Math.min(vw, vh) * 0.1
+      ) {
+        tracked = { x: this.lastYoloTip.x, y: this.lastYoloTip.y };
+        this.tipLk.reset();
+      }
+      if (
+        Math.hypot(tracked.x - prev.x, tracked.y - prev.y) >
+        Math.min(40, (this.geo?.side || 80) * 0.25)
+      ) {
+        this.clearEarLock("tip_lk_abort");
       } else if (tracked && prev && this.geo) {
         this.geo = {
           cx: this.geo.cx + (tracked.x - prev.x),

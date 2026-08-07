@@ -8,7 +8,7 @@
  * SHG cadence adapt. Tip-hold fills skipped SHG frames.
  */
 import * as ort from "/vendor/onnxruntime-web/dist/ort.wasm.min.mjs";
-import { OneEuroLandmarks } from "./one_euro.js";
+import { OneEuroLandmarks, OneEuro1D } from "./one_euro.js";
 import { YoloPoseBrowser } from "./yolo_pose.js";
 import { canvasRgbaToBgrChw, heatmapsToPointsSoft } from "./preprocess.js";
 import {
@@ -22,6 +22,8 @@ import {
 } from "./performance.js";
 import { yieldToPaint, yieldForInput, runWhenIdle } from "./yield.js";
 import { OrtInferenceWorker } from "./ort_worker_client.js";
+import { TipLkTracker } from "./tip_lk.js";
+import { LandmarkStickTracker } from "./landmark_stick.js";
 import {
   CROP_PAD,
   REFINE_PAD,
@@ -31,6 +33,7 @@ import {
   pinnaHeight,
   isSideProfile,
   landmarksOk,
+  pierceQuality,
   tipCropCenter,
   rescueCropCenter,
 } from "./ear_geometry.js";
@@ -44,8 +47,8 @@ let YOLO_EVERY = 1;
 let SHG_EVERY = 1;
 let YOLO_EVERY_MIN = 1;
 let SHG_EVERY_MIN = 1;
-const YOLO_EVERY_MAX = 2;
-const SHG_EVERY_MAX = 2;
+const YOLO_EVERY_MAX = 3;
+const SHG_EVERY_MAX = 12;
 const YOLO_IMGSZ = 640;
 const YOLO_CONF = YOLO_BOX_CONF;
 let CAM_FPS_MIN = 20;
@@ -73,6 +76,12 @@ let smoothMode = false;
 let cpuSlowdown = 1;
 let tipVelX = 0;
 let tipVelY = 0;
+const tipLk = new TipLkTracker();
+const landmarkStick = new LandmarkStickTracker(14);
+let ptsGen = 0;
+/** Stable crop box from last accepted SHG — translated with tip (no size flicker). */
+let lastBox = null;
+let boxTipAnchor = null; // tip used when lastBox was set
 let lastTipTs = 0;
 let lastInferStartTs = 0;
 let hudEvery = 1;
@@ -104,9 +113,9 @@ function applyResolvedProfile(profile, dynamic, capability) {
   DT_FALLBACK = 1 / CAM_FPS_DEFAULT;
   CAM_WIDTH = profile.cameraWidth;
   CAM_HEIGHT = profile.cameraHeight;
-  YOLO_EVERY = 1;
-  SHG_EVERY = profile.shgEvery;
-  YOLO_EVERY_MIN = 1;
+  YOLO_EVERY = Math.max(1, profile.yoloEvery || 2);
+  SHG_EVERY = Math.max(1, profile.shgEvery || 1);
+  YOLO_EVERY_MIN = Math.max(1, profile.yoloEveryMin || 2);
   SHG_EVERY_MIN = profile.shgEveryMin;
   LEFT_FLIP_RECHECK_EVERY = Math.max(
     4,
@@ -269,11 +278,23 @@ let tipPatch = null; // {g, x0, y0} grayscale template around tip
 const TIP_PATCH = 15; // odd — larger template sticks better on ear rim
 const TIP_SEARCH = 32;
 const TIP_COARSE = 2; // px stride for coarse SAD, then refine
-let geo = null; // {cx, cy, side}
+let geo = null; // {cx, cy, side} — always tip-anchored via geoRel
+/** Box center offset from tip (stable crop around ear tip). */
+let geoRel = null; // {dx, dy}
+/** Consecutive YOLO side-profile misses before dropping lock (anti-flicker). */
+let yoloMiss = 0;
+const YOLO_MISS_CLEAR = 8; // hold overlay through brief misses — kills on/off flicker
 let rawPts = null;
-let lastBox = null;
 let firstLock = true;
 let overlay = null; // committed {tip, box, landmarks, side} — same frame
+/** Display-smoothed tip (anti-jitter); holdTip is tracking tip. */
+let smoothTip = null;
+/** Fixed ear-box size (px); position follows smooth tip — stops box shake. */
+let lockBoxSide = 0;
+let smoothBox = null; // [x1,y1,x2,y2] EMA
+/** One Euro on tip alone — sticky to kill tip shake. */
+const tipFx = new OneEuro1D(0.85, 0.2, 0.95);
+const tipFy = new OneEuro1D(0.85, 0.2, 0.95);
 /** Cached LEFT flip choice after verified lock (avoids 2× SHG every frame → lag). */
 let leftFlipPrefer = true;
 let leftFlipShgCount = 0;
@@ -284,13 +305,13 @@ const snapCtx = snapCanvas.getContext("2d", { willReadFrequently: true });
 
 // Defaults match one_euro_settings.json / desktop tracking.settings
 const ONE_EURO_DEFAULTS = {
-  min_cutoff: 3.2,
-  beta: 1.1,
-  d_cutoff: 1.45,
-  rest_speed_px: 6.0,
-  rest_hold_frames: 1,
-  rest_release_mult: 1.15,
-  max_step_px: 110.0,
+  min_cutoff: 0.9,
+  beta: 0.25,
+  d_cutoff: 1.0,
+  rest_speed_px: 3.0,
+  rest_hold_frames: 3,
+  rest_release_mult: 1.5,
+  max_step_px: 10,
 };
 let oneEuroCfg = { ...ONE_EURO_DEFAULTS };
 const smoother = new OneEuroLandmarks(
@@ -304,7 +325,9 @@ const smoother = new OneEuroLandmarks(
 );
 
 function oneEuroMaxStep() {
-  return Math.max(1, Number(oneEuroCfg.max_step_px) || 42);
+  // 0 disables per-point step clamp (preferred for zero-lag shape updates)
+  const v = Number(oneEuroCfg.max_step_px);
+  return Number.isFinite(v) ? Math.max(0, v) : 0;
 }
 
 /** Load One Euro for the active device tier (high|medium|low). */
@@ -589,12 +612,24 @@ function clearEarLock(reason) {
   rawRel = null;
   firstLock = true;
   geo = null;
+  geoRel = null;
+  yoloMiss = 0;
   overlay = null;
   holdTip = null;
   tip = null;
   lastYoloTip = null;
+  smoothTip = null;
+  smoothBox = null;
+  lockBoxSide = 0;
   tipVelX = 0;
   tipVelY = 0;
+  tipLk.reset();
+  tipFx.reset();
+  tipFy.reset();
+  landmarkStick.reset();
+  ptsGen = 0;
+  lastBox = null;
+  boxTipAnchor = null;
   tipSnap = true;
   leftFlipPrefer = true;
   leftFlipShgCount = 0;
@@ -602,53 +637,119 @@ function clearEarLock(reason) {
   if (reason) console.log(`[ear] clear lock: ${reason}`);
 }
 
+/**
+ * Keep crop box glued to the live tip (box moves with ear, no lagging EMA center).
+ */
+function syncGeoToTip(tipPt, sideLen) {
+  if (!tipPt) return null;
+  if (!geoRel) geoRel = { dx: 0, dy: 0.06 * (sideLen || geo?.side || 80) };
+  const side = Math.max(32, sideLen ?? geo?.side ?? 80);
+  geo = {
+    cx: tipPt.x + geoRel.dx,
+    cy: tipPt.y + geoRel.dy,
+    side,
+  };
+  return geo;
+}
+
+/**
+ * Stable YOLO tip: heavy damp kills shake; snap only on large real motion.
+ */
+function adoptYoloTip(tipPt, { reseatLk = true } = {}) {
+  lastYoloTip = { x: tipPt.x, y: tipPt.y };
+  lastTipTs = performance.now();
+  const prev = holdTip;
+  if (!prev) {
+    holdTip = { x: tipPt.x, y: tipPt.y };
+    tip = holdTip;
+    smoothTip = { x: tipPt.x, y: tipPt.y };
+    tipFx.reset();
+    tipFy.reset();
+    tipFx.filter(tipPt.x, 1 / 25);
+    tipFy.filter(tipPt.y, 1 / 25);
+    if (reseatLk) tipLk.reset();
+    tipSnap = true;
+    syncGeoToTip(holdTip);
+    return holdTip;
+  }
+  const jump = Math.hypot(tipPt.x - prev.x, tipPt.y - prev.y);
+  // Ignore YOLO noise under ~2.5px
+  if (jump < 2.5) return holdTip;
+
+  // Always soft-merge — hard snaps were shaking landmarks + blue tip
+  const a = jump < 8 ? 0.18 : jump < 20 ? 0.32 : 0.5;
+  holdTip = {
+    x: prev.x * (1 - a) + tipPt.x * a,
+    y: prev.y * (1 - a) + tipPt.y * a,
+  };
+  if (jump > 22) {
+    tipLk.reset();
+    tipSnap = true;
+  }
+  tip = holdTip;
+  syncGeoToTip(holdTip);
+  return holdTip;
+}
+
 function updateGeoFromYolo(yolo, vw, vh) {
   if (!isSideProfile(yolo)) {
-    if (rawRel || overlay || holdTip) clearEarLock("not_side_profile");
-    else overlay = null;
+    yoloMiss++;
+    // Do NOT clear overlay on a single miss — that causes flicker.
+    // Only drop lock after sustained non-side-profile.
+    if (yoloMiss >= YOLO_MISS_CLEAR) {
+      clearEarLock("not_side_profile");
+    }
     return false;
   }
+
   const tipPt = yolo.tip;
-  // Side flip L↔R: never tip-hold landmarks across the face
+
+  // L↔R switch: drop everything — no slide left-ear → face → right-ear
   if (side && yolo.side && yolo.side !== side) {
     clearEarLock(`side_${side}_to_${yolo.side}`);
+    return false;
   }
-  // Huge tip jump (ear→face→other ear) → drop lock instead of sliding
+
   if (holdTip || lastYoloTip) {
     const prev = holdTip || lastYoloTip;
     const jump = Math.hypot(tipPt.x - prev.x, tipPt.y - prev.y);
-    const lim = Math.max(36, (geo?.side || 80) * 0.45);
+    const lim = Math.max(55, (geo?.side || 80) * 0.55);
     if (rawRel && jump > lim) {
       clearEarLock(`tip_jump_${jump.toFixed(0)}px`);
+      return false;
     }
   }
+
+  yoloMiss = 0;
 
   const pinna = pinnaHeight(yolo, vw, vh);
   const sideLen = pinna * CROP_PAD;
   const { ncx, ncy, mx } = tipCropCenter(tipPt, pinna, yolo, yolo.side, vw);
-  if (!geo) {
-    geo = { cx: ncx, cy: ncy, side: sideLen };
+  const wantDx = ncx - tipPt.x;
+  const wantDy = ncy - tipPt.y;
+  if (!geoRel) {
+    geoRel = { dx: wantDx, dy: wantDy };
   } else {
-    const a = 0.45;
-    geo = {
-      cx: (1 - a) * geo.cx + a * ncx,
-      cy: (1 - a) * geo.cy + a * ncy,
-      side: (1 - a) * geo.side + a * sideLen,
+    const a = 0.45; // match train/crop.py build_crop_meta
+    geoRel = {
+      dx: (1 - a) * geoRel.dx + a * wantDx,
+      dy: (1 - a) * geoRel.dy + a * wantDy,
     };
   }
-  // Tip must stay well inside the square (desktop rescue)
-  const half = geo.side * 0.5;
-  if (
-    Math.abs(tipPt.x - geo.cx) > half * 0.55 ||
-    Math.abs(tipPt.y - geo.cy) > half * 0.55
-  ) {
-    const r = rescueCropCenter(tipPt, pinna, mx);
-    geo = { cx: r.cx, cy: r.cy, side: geo.side };
-  }
+  const prevSide = geo?.side;
+  const sideSmooth = prevSide ? 0.55 * prevSide + 0.45 * sideLen : sideLen;
+
   side = yolo.side;
-  tip = tipPt;
-  holdTip = { x: tipPt.x, y: tipPt.y };
-  lastYoloTip = { x: tipPt.x, y: tipPt.y };
+  adoptYoloTip(tipPt, { reseatLk: false });
+  syncGeoToTip(holdTip || tipPt, sideSmooth);
+
+  const half = geo.side * 0.5;
+  const t = holdTip || tipPt;
+  if (Math.abs(t.x - geo.cx) > half * 0.55 || Math.abs(t.y - geo.cy) > half * 0.55) {
+    const r = rescueCropCenter(t, pinna, mx);
+    geoRel = { dx: r.cx - t.x, dy: r.cy - t.y };
+    syncGeoToTip(t, geo.side);
+  }
   tipPatch = null;
   return true;
 }
@@ -788,45 +889,53 @@ function paintVideo() {
 function drawHud(smoothedDisp, boxDisp, tipDisp, info) {
   if (boxDisp) {
     const [x1, y1, x2, y2] = boxDisp;
-    ctx.strokeStyle = "rgba(80, 200, 120, 0.95)";
+    ctx.strokeStyle = "rgba(0, 255, 0, 0.95)";
     ctx.lineWidth = 2;
     ctx.strokeRect(x1, y1, x2 - x1, y2 - y1);
   }
+  // Desktop tip: BGR(0,140,255) → RGB(255,140,0). Browser used blue tip;
+  // landmarks use the same blue tip style the live demo already shows.
+  const DOT_BLUE = "rgb(0, 140, 255)";
   if (tipDisp) {
-    ctx.fillStyle = "rgb(0,140,255)";
+    ctx.fillStyle = DOT_BLUE;
     ctx.beginPath();
-    ctx.arc(tipDisp[0], tipDisp[1], 4, 0, Math.PI * 2);
+    ctx.arc(tipDisp[0], tipDisp[1], 5, 0, Math.PI * 2);
     ctx.fill();
   }
   if (smoothedDisp) {
-    ctx.fillStyle = "rgb(0,220,255)";
+    // Same blue dots as tip (ear landmarks)
+    ctx.fillStyle = DOT_BLUE;
     for (let i = 0; i < smoothedDisp.length; i++) {
       if (i === PIERCING_INDEX) continue;
       const [x, y] = smoothedDisp[i];
       ctx.beginPath();
-      ctx.arc(x, y, 2, 0, Math.PI * 2);
+      ctx.arc(x, y, 2.5, 0, Math.PI * 2);
       ctx.fill();
     }
     if (smoothedDisp[PIERCING_INDEX]) {
       const [px, py] = smoothedDisp[PIERCING_INDEX];
-      ctx.fillStyle = "rgb(255,70,90)";
-      ctx.beginPath();
-      ctx.arc(px, py, 5, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.strokeStyle = "#fff";
+      // Piercing #56 — compact red cross + ring
+      const pr = 4.5;
+      ctx.strokeStyle = "rgb(255,0,0)";
       ctx.lineWidth = 1.5;
       ctx.beginPath();
-      ctx.arc(px, py, 7, 0, Math.PI * 2);
+      ctx.moveTo(px - pr, py);
+      ctx.lineTo(px + pr, py);
+      ctx.moveTo(px, py - pr);
+      ctx.lineTo(px, py + pr);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.arc(px, py, pr, 0, Math.PI * 2);
       ctx.stroke();
     }
   }
   if (info) {
     ctx.fillStyle = "rgba(0,0,0,0.5)";
-    ctx.fillRect(8, 8, 280, 40);
-    ctx.fillStyle = "#f0f0f0";
+    ctx.fillRect(8, 8, 320, 40);
+    ctx.fillStyle = "#ffffff";
     ctx.font = "12px ui-monospace, monospace";
     ctx.fillText(info, 16, 26);
-    ctx.fillText("YOLO|SHG · separate Workers", 16, 42);
+    ctx.fillText("ONNX stick · YOLO tip + SHGNet-56", 16, 42);
   }
 }
 
@@ -851,7 +960,12 @@ async function inferFromSnapshot(source, vw, vh, tipPt, sideNow, geoNow, yolo) {
       cx = tipPt.x;
       cy = tipPt.y;
     }
-    geo = { cx, cy, side: sideLen };
+    if (tipPt) {
+      geoRel = { dx: cx - tipPt.x, dy: cy - tipPt.y };
+      syncGeoToTip(tipPt, sideLen);
+    } else {
+      geo = { cx, cy, side: sideLen };
+    }
   }
 
   const preferFlip = sideNow === "LEFT" ? leftFlipPrefer : false;
@@ -866,40 +980,54 @@ async function inferFromSnapshot(source, vw, vh, tipPt, sideNow, geoNow, yolo) {
   let { pts, score } = await runShg(preferFlip, ox, oy, sidePx);
   const lock = firstLock;
   let ok1 = landmarksOk(pts, tipPt, sidePx);
+  let q1 = pierceQuality(pts, tipPt, sidePx, score);
   leftFlipShgCount += 1;
-  // LEFT: dual-flip on first lock + periodic recheck / weak score.
-  // After lock, skip extra SHG most frames so browser stays lag-free.
+  // LEFT dual-flip: first lock + every N + weak — not every SHG (pipe lag → off-ear)
   const recheckLeft =
     sideNow === "LEFT" &&
     (lock ||
       !ok1 ||
       score < 0.12 ||
-      leftFlipShgCount % LEFT_FLIP_RECHECK_EVERY === 0);
+      leftFlipShgCount % Math.max(4, LEFT_FLIP_RECHECK_EVERY) === 0);
   const shouldFlipCompare =
-    recheckLeft || (lock && (!ok1 || score < 0.35)) || score < 0.10;
+    recheckLeft || (lock && (!ok1 || score < 0.35)) || score < 0.08 || !ok1;
   if (shouldFlipCompare) {
     drawSquareCrop(source, cx, cy, sideLen, !preferFlip);
     const alt = await runShg(!preferFlip, ox, oy, sidePx);
     const okAlt = landmarksOk(alt.pts, tipPt, sidePx);
+    const qAlt = pierceQuality(alt.pts, tipPt, sidePx, alt.score);
     if (
-      alt.score > score + 0.02 ||
+      qAlt > q1 + 0.02 ||
       (okAlt && !ok1) ||
-      (okAlt && alt.score >= score)
+      (okAlt && alt.score > score + 0.02)
     ) {
       pts = alt.pts;
       score = alt.score;
-      ok1 = landmarksOk(pts, tipPt, sidePx);
+      ok1 = okAlt;
+      q1 = qAlt;
       if (sideNow === "LEFT") leftFlipPrefer = !preferFlip;
     } else if (sideNow === "LEFT") {
       leftFlipPrefer = preferFlip;
     }
   }
 
-  // LEFT: never accept without landmarksOk (no soft escape on low).
-  if (sideNow === "LEFT" && !(ok1 && score > MIN_SHG_SCORE)) return null;
+  // LEFT: never accept without landmarksOk (desktop)
+  if (sideNow === "LEFT" && !(ok1 && score >= MIN_SHG_SCORE)) {
+    return null;
+  }
+
+  // RIGHT: ok_lm, or first-lock soft (WASM: q>=0.22; desktop used 0.30)
+  const softRight =
+    lock && sideNow !== "LEFT" && score >= MIN_SHG_SCORE && q1 >= 0.22;
+  if (!ok1 && !softRight) {
+    return null;
+  }
+  if (score < MIN_SHG_SCORE) {
+    return null;
+  }
 
   // Optional hull refine — first lock only, skip if Workers (keeps pipe short)
-  if (!useDedicatedWorker && lock && ok1 && score > MIN_SHG_SCORE) {
+  if (!useDedicatedWorker && lock && score >= MIN_SHG_SCORE) {
     let x0 = Infinity,
       y0 = Infinity,
       x1 = -Infinity,
@@ -942,7 +1070,9 @@ async function inferFromSnapshot(source, vw, vh, tipPt, sideNow, geoNow, yolo) {
     }
   }
 
-  if (!(ok1 && score > MIN_SHG_SCORE)) return null;
+  // Soft first-lock may still have !ok1 — do not re-reject here
+  if (score < MIN_SHG_SCORE) return null;
+  if (!ok1 && !(lock && sideNow !== "LEFT" && q1 >= 0.22)) return null;
 
   // Expand crop from raw pts (match app.py)
   {
@@ -968,13 +1098,15 @@ async function inferFromSnapshot(source, vw, vh, tipPt, sideNow, geoNow, yolo) {
       const pinnaEst = sideLen / Math.max(CROP_PAD, 1e-3);
       const maxSide = pinnaEst * CROP_PAD * 1.35;
       sideLen = Math.min(sideLen + 2 * need + sideLen * 0.03, maxSide);
-      geo = { cx, cy, side: sideLen };
+      // Keep tip-anchored geo (do not break geoRel)
+      if (geoRel && tipPt) syncGeoToTip(tipPt, sideLen);
+      else geo = { cx, cy, side: sideLen };
       sidePx = Math.max(32, Math.round(sideLen));
       box = [
-        Math.max(0, Math.round(cx - sidePx * 0.5)),
-        Math.max(0, Math.round(cy - sidePx * 0.5)),
-        Math.min(vw, Math.round(cx + sidePx * 0.5)),
-        Math.min(vh, Math.round(cy + sidePx * 0.5)),
+        Math.max(0, Math.round((geo?.cx ?? cx) - sidePx * 0.5)),
+        Math.max(0, Math.round((geo?.cy ?? cy) - sidePx * 0.5)),
+        Math.min(vw, Math.round((geo?.cx ?? cx) + sidePx * 0.5)),
+        Math.min(vh, Math.round((geo?.cy ?? cy) + sidePx * 0.5)),
       ];
     }
   }
@@ -996,19 +1128,25 @@ async function runYoloJob(vw, vh) {
   yoloBusy = true;
   const t0 = performance.now();
   try {
-    // Reuse painted canvas (already mirrored) — skip second video draw
-    const y = await yoloPose.detect(canvas.width ? canvas : (grabSnap(vw, vh), snapCanvas));
-    if (!y) return;
+    // Freeze a clean video frame (no overlay) — async detect must not race paint
+    grabSnap(vw, vh);
+    const y = await yoloPose.detect(snapCanvas);
+    if (!y) {
+      yoloMiss++;
+      if (yoloMiss >= YOLO_MISS_CLEAR) clearEarLock("yolo_null");
+      return;
+    }
     if (side && y.side !== side) {
       clearEarLock(`yolo_side_${side}_to_${y.side}`);
+      return;
     }
     lastYolo = y;
     if (!updateGeoFromYolo(y, vw, vh)) {
-      setStatus("Turn head — clear SIDE PROFILE of one ear");
+      // Face / turn: overlay already cleared in updateGeoFromYolo
+      if (!rawRel) setStatus("Turn head — clear SIDE PROFILE of one ear");
       return;
     }
-    const prev = holdTip;
-    const tipPt = tip;
+    const tipPt = { x: y.tip.x, y: y.tip.y };
     const now = performance.now();
     if (lastYoloTip && lastTipTs) {
       const dtt = Math.max(0.016, (now - lastTipTs) / 1000);
@@ -1020,24 +1158,10 @@ async function runYoloJob(vw, vh) {
         tipVelY *= 600 / sp;
       }
     }
-    lastYoloTip = { x: tipPt.x, y: tipPt.y };
-    lastTipTs = now;
-    // Hard snap to YOLO tip — soft blend made landmarks trail the ear
-    holdTip = { x: tipPt.x, y: tipPt.y };
-    tip = holdTip;
+    // Soft merge when locked — tip LK owns live motion (no reseat yank)
+    adoptYoloTip(tipPt, { reseatLk: !rawRel || firstLock });
     tipPatch = null;
-    tipSnap = true;
-    if (prev && geo && rawRel) {
-      geo = {
-        cx: geo.cx + (holdTip.x - prev.x),
-        cy: geo.cy + (holdTip.y - prev.y),
-        side: geo.side,
-      };
-    }
-    if (rawRel && side && geo) {
-      applyTipHold(holdTip, side, geo, vw, vh, DT_FALLBACK, true);
-      tipSnap = false;
-    }
+    // Display loop owns overlay — avoid async paint races / flicker
     const ms = performance.now() - t0;
     lastHeavyMs = yoloPose?.lastMs || ms;
     pipeMsEma = pipeMsEma ? pipeMsEma * 0.9 + ms * 0.1 : ms;
@@ -1048,60 +1172,66 @@ async function runYoloJob(vw, vh) {
   }
 }
 
-/** SHG job — own Worker; never waits on YOLO. Tip-hold keeps UI smooth meanwhile. */
+/** SHG job — own Worker; never waits on YOLO. Tip-hold keeps UI live. */
 async function runShgJob(vw, vh, dt) {
   if (shgBusy) return;
   if (!geo || !tip || !side) return;
   if (!shgSession && !(useDedicatedWorker && ortWorker?.ready)) return;
+  // Avoid stacking SHG while WASM is still catching up
+  if (pipeMsEma > 220 && performance.now() - lastInferDoneTs < 120) {
+    return;
+  }
   shgBusy = true;
   const t0 = performance.now();
   try {
-    // Reuse painted canvas — avoid grabSnap cost on every SHG
-    const src = canvas.width ? canvas : (grabSnap(vw, vh), snapCanvas);
-    const tipPt = { x: (holdTip || tip).x, y: (holdTip || tip).y };
+    grabSnap(vw, vh);
+    const src = snapCanvas;
+    const tipAtInfer = { x: (holdTip || tip).x, y: (holdTip || tip).y };
     const result = await inferFromSnapshot(
       src,
       vw,
       vh,
-      tipPt,
+      tipAtInfer,
       side,
       geo,
       lastYolo
     );
     if (!result) return;
 
-    // Keep live tip if YOLO moved during SHG; only refresh shape offsets
-    const liveTip = holdTip || tipPt;
-    const newRel = result.pts.map(([x, y]) => [x - tipPt.x, y - tipPt.y]);
-    rawPts = result.pts;
-    lastBox = result.box;
+    const liveTip = holdTip || tipAtInfer;
+    const tipDrift = Math.hypot(
+      liveTip.x - tipAtInfer.x,
+      liveTip.y - tipAtInfer.y
+    );
+    // Stale SHG — keep previous shape (allow larger drift; tip-hold carries)
+    if (tipDrift > 36 && rawRel && !firstLock) {
+      return;
+    }
+    const warped = warpPtsToLiveTip(result.pts, tipAtInfer, liveTip);
+    // Don't drop a valid SHG just because warp failed the gate
+    if (!landmarksOk(warped.pts, warped.tip, result.box ? result.box[2] - result.box[0] : geo?.side || 80)) {
+      warped.pts = result.pts;
+      warped.tip = tipAtInfer;
+      warped.boxDx = 0;
+      warped.boxDy = 0;
+    }
 
     const snap = firstLock;
-    const stepPx = oneEuroMaxStep();
-    rawRel = smoother.filterOffsets
-      ? smoother.filterOffsets(newRel, dt, result.side, { maxStepPx: stepPx, snap })
-      : smoother
-          .updateRelative(
-            newRel.map(([x, y]) => [x + tipPt.x, y + tipPt.y]),
-            tipPt,
-            dt,
-            result.side,
-            { maxStepPx: stepPx, snap }
-          )
-          .map(([x, y]) => [x - tipPt.x, y - tipPt.y]);
-    if (snap) firstLock = false;
-    smoother.syncRelative(rawRel);
-
-    const landmarks = smoother.compose(liveTip, rawRel);
-    overlay = {
-      tip: { x: liveTip.x, y: liveTip.y },
-      box: result.box,
-      landmarks,
-      side: result.side,
-      pierce: landmarks[PIERCING_INDEX]
-        ? { x: landmarks[PIERCING_INDEX][0], y: landmarks[PIERCING_INDEX][1] }
-        : liveTip,
-    };
+    let box = result.box || [
+      Math.max(0, Math.round((geo?.cx || tipAtInfer.x) - (geo?.side || 80) * 0.5)),
+      Math.max(0, Math.round((geo?.cy || tipAtInfer.y) - (geo?.side || 80) * 0.5)),
+      Math.min(vw, Math.round((geo?.cx || tipAtInfer.x) + (geo?.side || 80) * 0.5)),
+      Math.min(vh, Math.round((geo?.cy || tipAtInfer.y) + (geo?.side || 80) * 0.5)),
+    ];
+    if (warped.boxDx || warped.boxDy) {
+      box = [
+        Math.max(0, Math.round(box[0] + warped.boxDx)),
+        Math.max(0, Math.round(box[1] + warped.boxDy)),
+        Math.min(vw, Math.round(box[2] + warped.boxDx)),
+        Math.min(vh, Math.round(box[3] + warped.boxDy)),
+      ];
+    }
+    commitShgShape(warped.pts, warped.tip, box, result.side || side, dt, snap);
     const ms = performance.now() - t0;
     lastHeavyMs = ms;
     pipeMsEma = pipeMsEma ? pipeMsEma * 0.85 + ms * 0.15 : ms;
@@ -1216,28 +1346,142 @@ function jumpIsLarge(prev, next) {
   return Math.hypot(next.x - prev.x, next.y - prev.y) > 40;
 }
 
-function applyTipHold(tipPt, sideNow, geoNow, vw, vh, _dt, snap) {
-  if (!rawRel || !tipPt || !sideNow || !geoNow) return false;
-  if (snap) smoother.syncRelative(rawRel);
-  const rigid = smoother.compose
-    ? smoother.compose(tipPt, rawRel)
-    : rawRel.map(([x, y]) => [x + tipPt.x, y + tipPt.y]);
-  const sidePx = geoNow.side;
+/**
+ * Stable paint: One-Euro tip + tip-relative landmarks.
+ * Green box from landmark hull (ear-sized), not the oversized SHG crop.
+ */
+function applyTipHold(tipPt, sideNow, _geoNow, vw, vh, dt, snap) {
+  if (!rawRel || !tipPt || !sideNow) return false;
+  if (yoloMiss >= YOLO_MISS_CLEAR) {
+    overlay = null;
+    return false;
+  }
+  if (snap) {
+    smoother.syncRelative(rawRel);
+    tipFx.reset();
+    tipFy.reset();
+  }
+
+  const dtt = Math.max(0.016, Number(dt) || 0.04);
+  const drawTip = {
+    x: tipFx.filter(tipPt.x, dtt),
+    y: tipFy.filter(tipPt.y, dtt),
+  };
+  // Clamp one-frame tip jump (anti-shake)
+  if (smoothTip) {
+    const j = Math.hypot(drawTip.x - smoothTip.x, drawTip.y - smoothTip.y);
+    const maxStep = 3.5;
+    if (j > maxStep) {
+      drawTip.x = smoothTip.x + ((drawTip.x - smoothTip.x) * maxStep) / j;
+      drawTip.y = smoothTip.y + ((drawTip.y - smoothTip.y) * maxStep) / j;
+      tipFx.xPrev = drawTip.x;
+      tipFy.xPrev = drawTip.y;
+    }
+  }
+  smoothTip = { x: drawTip.x, y: drawTip.y };
+  syncGeoToTip(drawTip, geo?.side);
+
+  const landmarks = smoother.compose
+    ? smoother.compose(drawTip, rawRel)
+    : rawRel.map(([x, y]) => [x + drawTip.x, y + drawTip.y]);
+
+  // Ear-tight box from landmark cloud (not full crop side)
+  let x0 = Infinity,
+    y0 = Infinity,
+    x1 = -Infinity,
+    y1 = -Infinity;
+  for (const [x, y] of landmarks) {
+    if (x < x0) x0 = x;
+    if (y < y0) y0 = y;
+    if (x > x1) x1 = x;
+    if (y > y1) y1 = y;
+  }
+  const span = Math.max(x1 - x0, y1 - y0, 24);
+  const pad = span * 0.14;
+  const maxSide = Math.min(vw, vh) * 0.28;
+  const sidePx = Math.min(span + 2 * pad, maxSide);
+  const cx = 0.5 * (x0 + x1);
+  const cy = 0.5 * (y0 + y1);
+  const half = sidePx * 0.5;
+  const targetBox = [
+    Math.max(0, cx - half),
+    Math.max(0, cy - half),
+    Math.min(vw, cx + half),
+    Math.min(vh, cy + half),
+  ];
+  if (!smoothBox) {
+    smoothBox = targetBox.slice();
+  } else {
+    const ba = 0.25;
+    smoothBox = [
+      smoothBox[0] * (1 - ba) + targetBox[0] * ba,
+      smoothBox[1] * (1 - ba) + targetBox[1] * ba,
+      smoothBox[2] * (1 - ba) + targetBox[2] * ba,
+      smoothBox[3] * (1 - ba) + targetBox[3] * ba,
+    ];
+  }
+  const box = [
+    Math.round(smoothBox[0]),
+    Math.round(smoothBox[1]),
+    Math.round(smoothBox[2]),
+    Math.round(smoothBox[3]),
+  ];
+  lockBoxSide = Math.round(sidePx);
+
   overlay = {
-    tip: { x: tipPt.x, y: tipPt.y },
-    box: [
-      Math.max(0, Math.round(geoNow.cx - sidePx * 0.5)),
-      Math.max(0, Math.round(geoNow.cy - sidePx * 0.5)),
-      Math.min(vw, Math.round(geoNow.cx + sidePx * 0.5)),
-      Math.min(vh, Math.round(geoNow.cy + sidePx * 0.5)),
-    ],
-    landmarks: rigid,
+    tip: { x: drawTip.x, y: drawTip.y },
+    box,
+    landmarks,
     side: sideNow,
-    pierce: rigid[PIERCING_INDEX]
-      ? { x: rigid[PIERCING_INDEX][0], y: rigid[PIERCING_INDEX][1] }
-      : { x: tipPt.x, y: tipPt.y },
+    pierce: landmarks[PIERCING_INDEX]
+      ? { x: landmarks[PIERCING_INDEX][0], y: landmarks[PIERCING_INDEX][1] }
+      : { x: drawTip.x, y: drawTip.y },
   };
   return true;
+}
+
+/** Warp SHG pts from inference-tip to live tip so late WASM results still land on ear. */
+function warpPtsToLiveTip(pts, tipAtInfer, liveTip) {
+  const dx = liveTip.x - tipAtInfer.x;
+  const dy = liveTip.y - tipAtInfer.y;
+  if (Math.hypot(dx, dy) < 0.5) {
+    return { pts, tip: { x: liveTip.x, y: liveTip.y }, boxDx: 0, boxDy: 0 };
+  }
+  return {
+    pts: pts.map(([x, y]) => [x + dx, y + dy]),
+    tip: { x: liveTip.x, y: liveTip.y },
+    boxDx: dx,
+    boxDy: dy,
+  };
+}
+
+function commitShgShape(pts, tipPt, box, sideNow, dt, snap) {
+  const newRel = pts.map(([x, y]) => [x - tipPt.x, y - tipPt.y]);
+  let blended = newRel;
+  if (rawRel && !snap && rawRel.length === newRel.length) {
+    // Prefer stability — less pop/shake when SHG refreshes
+    blended = newRel.map((p, i) => [
+      0.45 * rawRel[i][0] + 0.55 * p[0],
+      0.45 * rawRel[i][1] + 0.55 * p[1],
+    ]);
+  }
+  const stepPx = oneEuroMaxStep();
+  rawRel = smoother.filterOffsets
+    ? smoother.filterOffsets(blended, dt, sideNow, {
+        maxStepPx: snap ? 0 : Math.min(stepPx, 10),
+        snap: !!snap,
+      })
+    : blended;
+  smoother.syncRelative(rawRel);
+  firstLock = false;
+  rawPts = pts;
+  if (box) {
+    lastBox = box.slice();
+    boxTipAnchor = { x: tipPt.x, y: tipPt.y };
+  }
+  ptsGen += 1;
+  tipSnap = false;
+  return smoother.compose(tipPt, rawRel);
 }
 
 function noteDisplayFps(ts) {
@@ -1272,10 +1516,10 @@ function paintOverlayHud() {
     `LIVE ${shownFps.toFixed(0)}/${want} fps · ${activeProfileName} · pipe ${pipeMsEma.toFixed(0)} ms · ${epLabel}`
   );
   setStatus(
-    `LIVE ${shownFps.toFixed(0)} display FPS · ${activeProfileLabel || activeProfileName} · target ${want} ` +
-      `(band ${CAM_FPS_MIN}–${CAM_FPS_MAX}) · pipe ${pipeMsEma.toFixed(0)} ms (SHG ${inferMsEma.toFixed(0)} ms) (${epLabel})\n` +
-      `Ear: ${earLabel} · 56 pts ${lmDisp ? "on" : "…"} · YOLO→crop→SHG→One Euro\n` +
-      `Note: latest completed frame result is rendered; busy frames are skipped.`
+    `ONNX stick · LIVE ${shownFps.toFixed(0)}/${want} fps · ${activeProfileLabel || activeProfileName} · ` +
+      `pipe ${pipeMsEma.toFixed(0)} ms (SHG ${inferMsEma.toFixed(0)} ms) (${epLabel})\n` +
+      `Ear: ${earLabel} · 56 pts ${lmDisp ? "on" : "hidden if not side-ear"} · stable tip-lock\n` +
+      `No flicker: smoothed tip/box · landmarks stay on ear.`
   );
 }
 
@@ -1294,21 +1538,22 @@ async function runFramePipeline(vw, vh, dt) {
     const source = snapCanvas;
     const yolo = await yoloPose.detect(source);
     if (!yolo || !updateGeoFromYolo(yolo, vw, vh)) {
-      overlay = null;
-      setStatus("No clear side-profile ear detected");
+      // Keep tip-hold overlay during brief YOLO miss (anti-flicker)
+      if (!rawRel) {
+        overlay = null;
+        setStatus("No clear side-profile ear detected");
+      }
       return;
     }
 
     lastYolo = yolo;
     const tipPt = { x: yolo.tip.x, y: yolo.tip.y };
-    holdTip = tipPt;
-    tip = tipPt;
-    lastYoloTip = tipPt;
+    adoptYoloTip(tipPt, { reseatLk: jumpIsLarge(holdTip, tipPt) || !holdTip });
     side = yolo.side;
-    // Tip-hold only after verified lock — never during L↔R transition
-    if (rawRel && !firstLock && geo) {
-      applyTipHold(tipPt, yolo.side, geo, vw, vh, dt, false);
-    } else {
+    const cropTip = holdTip || tipPt;
+    if (rawRel && !firstLock && geo && holdTip) {
+      applyTipHold(holdTip, yolo.side, geo, vw, vh, dt, false);
+    } else if (!rawRel || firstLock) {
       overlay = null;
     }
 
@@ -1316,7 +1561,7 @@ async function runFramePipeline(vw, vh, dt) {
       source,
       vw,
       vh,
-      tipPt,
+      cropTip,
       yolo.side,
       geo,
       yolo
@@ -1330,36 +1575,38 @@ async function runFramePipeline(vw, vh, dt) {
     }
 
     const snap = firstLock;
-    const liveTip = holdTip || tipPt;
-    const newRel = result.pts.map(([x, y]) => [x - tipPt.x, y - tipPt.y]);
-    // One Euro on offsets only — never filter tip
-    const stepPx = oneEuroMaxStep();
-    const smoothRel = smoother.filterOffsets
-      ? smoother.filterOffsets(newRel, dt, yolo.side, { maxStepPx: stepPx, snap })
-      : smoother
-          .updateRelative(
-            newRel.map(([x, y]) => [x + tipPt.x, y + tipPt.y]),
-            tipPt,
-            dt,
-            yolo.side,
-            { maxStepPx: stepPx, snap }
-          )
-          .map(([x, y]) => [x - tipPt.x, y - tipPt.y]);
-    rawRel = smoothRel;
-    smoother.syncRelative(rawRel);
-    firstLock = false;
-    rawPts = result.pts;
-
-    const landmarks = smoother.compose(liveTip, rawRel);
-    overlay = {
-      tip: { x: liveTip.x, y: liveTip.y },
-      box: result.box,
-      landmarks,
-      side: yolo.side,
-      pierce: landmarks[PIERCING_INDEX]
-        ? { x: landmarks[PIERCING_INDEX][0], y: landmarks[PIERCING_INDEX][1] }
-        : liveTip,
-    };
+    const liveTip = holdTip || cropTip;
+    const warped = warpPtsToLiveTip(result.pts, cropTip, liveTip);
+    // Soft first-lock already passed infer gates — never drop it on re-check
+    if (!snap) {
+      if (!landmarksOk(warped.pts, warped.tip, geo?.side || 80)) {
+        if (!landmarksOk(result.pts, cropTip, geo?.side || 80)) {
+          if (!rawRel) setStatus("Ear detected · waiting for valid SHGNet landmarks");
+          return;
+        }
+        warped.pts = result.pts;
+        warped.tip = cropTip;
+        warped.boxDx = 0;
+        warped.boxDy = 0;
+      }
+    }
+    let box = result.box || [
+      Math.max(0, Math.round((geo?.cx || cropTip.x) - (geo?.side || 80) * 0.5)),
+      Math.max(0, Math.round((geo?.cy || cropTip.y) - (geo?.side || 80) * 0.5)),
+      Math.min(vw, Math.round((geo?.cx || cropTip.x) + (geo?.side || 80) * 0.5)),
+      Math.min(vh, Math.round((geo?.cy || cropTip.y) + (geo?.side || 80) * 0.5)),
+    ];
+    if (warped.boxDx || warped.boxDy) {
+      box = [
+        Math.max(0, Math.round(box[0] + warped.boxDx)),
+        Math.max(0, Math.round(box[1] + warped.boxDy)),
+        Math.min(vw, Math.round(box[2] + warped.boxDx)),
+        Math.min(vh, Math.round(box[3] + warped.boxDy)),
+      ];
+    }
+    commitShgShape(warped.pts, warped.tip, box, yolo.side, dt, snap);
+    syncGeoToTip(warped.tip, geo?.side);
+    applyTipHold(warped.tip, yolo.side, geo, vw, vh, dt, false);
     lastHeavyMs = yoloPose.lastMs || performance.now() - t0;
     pipeMsEma = pipeMsEma ? pipeMsEma * 0.85 + (performance.now() - t0) * 0.15 : performance.now() - t0;
     adaptInferenceLoad();
@@ -1385,50 +1632,45 @@ function onDisplayTick(ts) {
 
   noteDisplayFps(ts);
 
-  // Tip-hold only while a verified ear lock exists — never slide L↔R across face.
-  const earLocked = !!(rawRel && !firstLock && side && geo && (holdTip || tip));
+  // Keep tip-hold through brief YOLO misses (anti-flicker). Only drop after clear.
+  const earLocked = !!(
+    rawRel &&
+    !firstLock &&
+    side &&
+    geo &&
+    (holdTip || tip) &&
+    yoloMiss < YOLO_MISS_CLEAR
+  );
   if (earLocked) {
     const prev = holdTip || tip;
     let tracked = prev;
-    // Light velocity coast between YOLO updates so tip stays live at 20–30 FPS
-    if (lastYoloTip && prev) {
-      tipVelX *= 0.88;
-      tipVelY *= 0.88;
-      const pull = 0.45;
-      let stepX =
-        tipVelX * dt + (lastYoloTip.x - prev.x) * pull * Math.min(1, dt * 30);
-      let stepY =
-        tipVelY * dt + (lastYoloTip.y - prev.y) * pull * Math.min(1, dt * 30);
-      const step = Math.hypot(stepX, stepY);
-      const maxStep = Math.min(22, (geo?.side || 80) * 0.12);
-      if (step > maxStep && step > 1e-6) {
-        stepX *= maxStep / step;
-        stepY *= maxStep / step;
+    // Tip LK only when YOLO is stale — prevents tip LK fighting YOLO (shake)
+    const yoloAge = lastTipTs ? performance.now() - lastTipTs : 1e9;
+    if (yoloAge > 90) {
+      const lk = tipLk.update(ctx, prev);
+      if (lk.ok) {
+        const step = Math.hypot(lk.x - prev.x, lk.y - prev.y);
+        if (step >= 0.8 && step < 10) {
+          tracked = {
+            x: prev.x * 0.7 + lk.x * 0.3,
+            y: prev.y * 0.7 + lk.y * 0.3,
+          };
+        }
       }
-      tracked = { x: prev.x + stepX, y: prev.y + stepY };
-      // Abort tip-hold if coasting would leap (transition / bad track)
-      if (Math.hypot(tracked.x - prev.x, tracked.y - prev.y) > maxStep * 1.5) {
-        clearEarLock("tip_coast_abort");
-      } else {
-        geo = {
-          cx: geo.cx + (tracked.x - prev.x),
-          cy: geo.cy + (tracked.y - prev.y),
-          side: geo.side,
-        };
-        holdTip = tracked;
-        tip = tracked;
-        applyTipHold(holdTip || tip, side, geo, vw, vh, dt, tipSnap);
-        tipSnap = false;
-      }
-    } else {
-      applyTipHold(holdTip || tip, side, geo, vw, vh, dt, tipSnap);
-      tipSnap = false;
     }
-  } else if (overlay && (!rawRel || firstLock)) {
-    overlay = null;
+    if (prev && tracked) {
+      const dtt = Math.max(dt, 1e-3);
+      tipVelX = tipVelX * 0.75 + ((tracked.x - prev.x) / dtt) * 0.25;
+      tipVelY = tipVelY * 0.75 + ((tracked.y - prev.y) / dtt) * 0.25;
+    }
+    holdTip = tracked;
+    tip = tracked;
+    applyTipHold(holdTip, side, geo, vw, vh, dt, tipSnap);
+    tipSnap = false;
+  } else if (yoloMiss >= YOLO_MISS_CLEAR) {
+    if (overlay) overlay = null;
   }
 
-  // Serialized YOLO → crop → SHGNet on cadence. Display never waits.
   const modelsReady =
     shgSession || (useDedicatedWorker && ortWorker?.ready);
   if (modelsReady) {
@@ -1436,14 +1678,25 @@ function onDisplayTick(ts) {
     const shgEvery = Math.max(1, SHG_EVERY || 1);
     const yoloEvery = Math.max(1, YOLO_EVERY || 1);
     const needLock = !rawRel || firstLock;
-    // Offset SHG phase so YOLO+SHG don't starve on the same tick under load
-    const runYolo = needLock || inferTick % yoloEvery === 0;
-    const runShg =
-      needLock || (inferTick + Math.floor(shgEvery / 2)) % shgEvery === 0;
-    if (runYolo || runShg) {
+    if (needLock) {
       runFramePipeline(vw, vh, dt).catch((e) =>
         setStatus(`Frame pipeline error: ${e?.message || e}`)
       );
+    } else {
+      // Steady cadence only — motion-burst caused flicker/jitter
+      const runYolo = inferTick % yoloEvery === 0;
+      const runShg =
+        !runYolo &&
+        (inferTick + Math.floor(shgEvery / 2)) % shgEvery === 0;
+      if (runYolo && !yoloBusy) {
+        runYoloJob(vw, vh).catch((e) =>
+          setStatus(`YOLO error: ${e?.message || e}`)
+        );
+      } else if (runShg && !shgBusy) {
+        runShgJob(vw, vh, dt).catch((e) =>
+          setStatus(`SHG error: ${e?.message || e}`)
+        );
+      }
     }
   }
 
@@ -1497,7 +1750,7 @@ function adaptInferenceLoad() {
   // Quality freeze: camera + YOLO locked. Under load, sparsify SHG only.
   if (perfScaler) {
     perfScaler.observe(pipeMsEma, fpsEma);
-    YOLO_EVERY = Math.max(1, perfScaler.yoloEvery || perfScaler.base?.yoloEvery || 1);
+    YOLO_EVERY = Math.max(2, perfScaler.yoloEvery || perfScaler.base?.yoloEvery || 2);
     SHG_EVERY = Math.max(1, perfScaler.shgEvery || 1);
     if (fpsSlider) fpsSlider.value = String(perfScaler.targetFps);
     if (fpsTargetVal) fpsTargetVal.textContent = String(perfScaler.targetFps);
@@ -1631,6 +1884,16 @@ async function startCamera() {
   lastYolo = null;
   lastBox = null;
   geo = null;
+  geoRel = null;
+  yoloMiss = 0;
+  boxTipAnchor = null;
+  smoothTip = null;
+  smoothBox = null;
+  lockBoxSide = 0;
+  tipFx.reset();
+  tipFy.reset();
+  landmarkStick.reset();
+  ptsGen = 0;
   tip = null;
   holdTip = null;
   lastYoloTip = null;
@@ -1654,6 +1917,7 @@ async function startCamera() {
   lastInferStartTs = 0;
   tipVelX = 0;
   tipVelY = 0;
+  tipLk.reset();
   lastTipTs = 0;
   yoloBusy = false;
   shgBusy = false;

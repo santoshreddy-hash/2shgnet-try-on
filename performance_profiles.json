@@ -50,8 +50,9 @@
       "target_fps": 25,
       "fps_max": 25,
       "yolo_imgsz": 640,
-      "shg_every": 1,
-      "shg_every_max": 2
+      "yolo_every": 2,
+      "shg_every": 3,
+      "shg_every_max": 8
     },
     "medium": {
       "camera_width": 640,
@@ -61,8 +62,9 @@
       "target_fps": 25,
       "fps_max": 25,
       "yolo_imgsz": 640,
-      "shg_every": 1,
-      "shg_every_max": 2
+      "yolo_every": 2,
+      "shg_every": 4,
+      "shg_every_max": 8
     },
     "low": {
       "camera_width": 640,
@@ -72,8 +74,9 @@
       "target_fps": 25,
       "fps_max": 25,
       "yolo_imgsz": 640,
-      "shg_every": 1,
-      "shg_every_max": 2
+      "yolo_every": 3,
+      "shg_every": 5,
+      "shg_every_max": 10
     }
   },
   "camera_ladder": [

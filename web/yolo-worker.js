@@ -5,7 +5,7 @@
 import * as ort from "/vendor/onnxruntime-web/dist/ort.wasm.min.mjs";
 
 let IMGSZ = 640;
-const confThr = 0.25;
+const confThr = 0.12;
 const NOSE = 0;
 const LEFT_EYE = 1;
 const RIGHT_EYE = 2;
@@ -36,8 +36,14 @@ function parseYolo(arr, dims, padX, padY, r) {
     let bestScore = confThr;
     for (let i = 0; i < nDet; i++) {
       const score = get(4, i);
-      if (score > bestScore) {
-        bestScore = score;
+      if (score < confThr) continue;
+      const le = get(5 + LEFT_EAR * 3 + 2, i);
+      const re = get(5 + RIGHT_EAR * 3 + 2, i);
+      const earC = Math.max(le, re);
+      if (earC < 0.15) continue;
+      const rank = score * (0.35 + 0.65 * earC);
+      if (rank > bestScore) {
+        bestScore = rank;
         bestOff = i;
       }
     }
@@ -53,7 +59,7 @@ function parseYolo(arr, dims, padX, padY, r) {
         const [x, y] = un(get(base, bestOff), get(base + 1, bestOff));
         return { x, y, c: get(base + 2, bestOff) };
       };
-      best = { kpt, bbox: [x1, y1, x2, y2], conf: bestScore };
+      best = { kpt, bbox: [x1, y1, x2, y2], conf: get(4, bestOff) };
     }
   } else {
     let nDet = 300;
@@ -69,8 +75,14 @@ function parseYolo(arr, dims, padX, padY, r) {
     let bestScore = confThr;
     for (let i = 0; i < nDet; i++) {
       const score = get(i, 4);
-      if (score > bestScore) {
-        bestScore = score;
+      if (score < confThr) continue;
+      const le = get(i, 6 + LEFT_EAR * 3 + 2);
+      const re = get(i, 6 + RIGHT_EAR * 3 + 2);
+      const earC = Math.max(le, re);
+      if (earC < 0.15) continue;
+      const rank = score * (0.35 + 0.65 * earC);
+      if (rank > bestScore) {
+        bestScore = rank;
         bestOff = i;
       }
     }
@@ -82,7 +94,7 @@ function parseYolo(arr, dims, padX, padY, r) {
         const [x, y] = un(get(bestOff, base), get(bestOff, base + 1));
         return { x, y, c: get(bestOff, base + 2) };
       };
-      best = { kpt, bbox: [x1, y1, x2, y2], conf: bestScore };
+      best = { kpt, bbox: [x1, y1, x2, y2], conf: get(bestOff, 4) };
     }
   }
 
@@ -95,8 +107,9 @@ function parseYolo(arr, dims, padX, padY, r) {
   const rightEye = best.kpt(RIGHT_EYE);
   const [x1, y1, x2, y2] = best.bbox;
 
+  // Match train/crop.py EAR_KEYPOINT_MIN_CONF + is_side_profile
   let side;
-  if (left.c >= 0.25 || right.c >= 0.25) {
+  if (left.c >= 0.15 || right.c >= 0.15) {
     side = left.c >= right.c ? "LEFT" : "RIGHT";
   } else {
     side =
@@ -104,12 +117,13 @@ function parseYolo(arr, dims, padX, padY, r) {
   }
   const ear = side === "LEFT" ? left : right;
   const other = side === "LEFT" ? right : left;
-  if (ear.c < 0.25) return null;
-  if (other.c >= 0.5 && other.c >= ear.c * 0.85) return null;
+  if (ear.c < 0.15) return null;
+  if (other.c >= 0.35 && other.c >= ear.c * 0.7) return null;
   if (nose.c >= 0.2) {
     const dx = Math.abs(ear.x - nose.x);
     const d = Math.hypot(ear.x - nose.x, ear.y - nose.y);
-    if (dx < 22 || d < 28) return null;
+    if (dx < 28 || d < 36) return null;
+    if (dx < d * 0.55) return null;
   }
 
   let eyeDist = null;

@@ -18,7 +18,7 @@ export class YoloPoseBrowser {
    * @param {import('onnxruntime-web').InferenceSession} session
    * @param {(data:Float32Array,dims:number[]) => any} makeTensor
    */
-  constructor(session, makeTensor, imgsz = 640, conf = 0.25) {
+  constructor(session, makeTensor, imgsz = 640, conf = 0.12) {
     this.session = session;
     this.makeTensor = makeTensor;
     this.inputName = session.inputNames[0];
@@ -91,8 +91,15 @@ export class YoloPoseBrowser {
         let bestScore = this.conf;
         for (let i = 0; i < nDet; i++) {
           const score = get(4, i);
-          if (score > bestScore) {
-            bestScore = score;
+          if (score < this.conf) continue;
+          // Prefer detections with a clear ear tip (accuracy over raw box score)
+          const le = get(5 + LEFT_EAR * 3 + 2, i);
+          const re = get(5 + RIGHT_EAR * 3 + 2, i);
+          const earC = Math.max(le, re);
+          if (earC < 0.15) continue;
+          const rank = score * (0.35 + 0.65 * earC);
+          if (rank > bestScore) {
+            bestScore = rank;
             bestOff = i;
           }
         }
@@ -108,7 +115,7 @@ export class YoloPoseBrowser {
             const [x, y] = un(get(base, bestOff), get(base + 1, bestOff));
             return { x, y, c: get(base + 2, bestOff) };
           };
-          best = { kpt, bbox: [x1, y1, x2, y2], conf: bestScore };
+          best = { kpt, bbox: [x1, y1, x2, y2], conf: get(4, bestOff) };
         }
       } else {
         let nDet = 300;
@@ -124,8 +131,14 @@ export class YoloPoseBrowser {
         let bestScore = this.conf;
         for (let i = 0; i < nDet; i++) {
           const score = get(i, 4);
-          if (score > bestScore) {
-            bestScore = score;
+          if (score < this.conf) continue;
+          const le = get(i, 6 + LEFT_EAR * 3 + 2);
+          const re = get(i, 6 + RIGHT_EAR * 3 + 2);
+          const earC = Math.max(le, re);
+          if (earC < 0.15) continue;
+          const rank = score * (0.35 + 0.65 * earC);
+          if (rank > bestScore) {
+            bestScore = rank;
             bestOff = i;
           }
         }
@@ -137,7 +150,7 @@ export class YoloPoseBrowser {
             const [x, y] = un(get(bestOff, base), get(bestOff, base + 1));
             return { x, y, c: get(bestOff, base + 2) };
           };
-          best = { kpt, bbox: [x1, y1, x2, y2], conf: bestScore };
+          best = { kpt, bbox: [x1, y1, x2, y2], conf: get(bestOff, 4) };
         }
       }
 
@@ -154,7 +167,7 @@ export class YoloPoseBrowser {
       const [x1, y1, x2, y2] = best.bbox;
 
       let side;
-      if (left.c >= 0.25 || right.c >= 0.25) {
+      if (left.c >= 0.15 || right.c >= 0.15) {
         side = left.c >= right.c ? "LEFT" : "RIGHT";
       } else {
         side =
@@ -164,18 +177,22 @@ export class YoloPoseBrowser {
       }
       const ear = side === "LEFT" ? left : right;
       const other = side === "LEFT" ? right : left;
-      if (ear.c < 0.25) {
+      if (ear.c < 0.15) {
         this.last = null;
         return null;
       }
-      if (other.c >= 0.5 && other.c >= ear.c * 0.85) {
+      if (other.c >= 0.35 && other.c >= ear.c * 0.7) {
         this.last = null;
         return null;
       }
       if (nose.c >= 0.2) {
         const dx = Math.abs(ear.x - nose.x);
         const d = Math.hypot(ear.x - nose.x, ear.y - nose.y);
-        if (dx < 22 || d < 28) {
+        if (dx < 28 || d < 36) {
+          this.last = null;
+          return null;
+        }
+        if (dx < d * 0.55) {
           this.last = null;
           return null;
         }

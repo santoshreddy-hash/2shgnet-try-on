@@ -8,8 +8,9 @@ const WIN = 7; // half-window → 15×15
 const MAX_LEVEL = 2;
 const MAX_ITER = 7;
 const EPS = 0.015;
-const TIP_MAX_STEP = 14;
-const BLEND = 0.45;
+const TIP_MAX_STEP = 12;
+// Match desktop track_tip_lk soft blend
+const BLEND = 0.65;
 const ROI_HALF = 56;
 
 /**
