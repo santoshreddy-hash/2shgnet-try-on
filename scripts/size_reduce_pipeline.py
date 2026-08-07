@@ -518,7 +518,10 @@ def step6_compare(prev: dict) -> dict:
         browser = "FP16"
 
     desktop = "FP32_fused"  # accuracy-first desktop
-    mobile = "INT8" if ok(int8) and acc_ok(int8, 3.5) else browser
+    # INT8 dynamic is typically too lossy without calibration
+    mobile = "FP16" if ok(fp16) and acc_ok(fp16, 3.5) else desktop
+    if browser == "INT8" and not acc_ok(int8, 2.5):
+        browser = "FP16" if ok(fp16) else desktop
 
     info = {
         "step": 6,
@@ -526,15 +529,15 @@ def step6_compare(prev: dict) -> dict:
         "recommendations": {
             "Desktop": {
                 "model": desktop,
-                "why": "Highest accuracy; AVX ONNX Runtime; fused FP32 already faster than unfused",
+                "why": "Highest accuracy; deploy fused graph via ONNX Runtime (AVX)",
             },
             "Browser": {
                 "model": browser,
-                "why": "WASM size + speed; prefer FP16/INT8 when landmark error stays small",
+                "why": "WASM size + speed; FP16 preferred until calibrated static INT8",
             },
             "Android_iPhone": {
                 "model": mobile,
-                "why": "ONNX Runtime Mobile / NNAPI / Core ML — smallest viable INT8",
+                "why": "FP16 until calibrated static INT8; dynamic INT8 often too lossy",
             },
         },
         "live_master_untouched": True,
