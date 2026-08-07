@@ -1,0 +1,15 @@
+{
+  "step": 4,
+  "path_name": "FP16_from_FP32",
+  "source_fp32": "outputs/size_reduce/pth/SHGNet-56_fused_fp32.pth",
+  "pth": "outputs/size_reduce/pth/SHGNet-56_fp16.pth",
+  "file_mb": 16.429,
+  "state_dict_mb": 16.197,
+  "infer_ms": 330.941,
+  "accuracy_vs_fp32": {
+    "mean_px": 0.0714,
+    "max_px": 4.0,
+    "pierce_px": 0.0,
+    "heatmap_max_abs": 0.00379
+  }
+}

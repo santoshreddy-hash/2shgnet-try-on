@@ -1,0 +1,9 @@
+{
+  "step": 2,
+  "params_m": 8.46,
+  "state_dict_mb": 32.393,
+  "file_mb": 32.677,
+  "flops_g": 8.546,
+  "infer_ms": 561.76,
+  "dtype": "float32"
+}

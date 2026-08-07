@@ -1,0 +1,15 @@
+{
+  "step": 3,
+  "n_fused_pairs": 65,
+  "pth": "outputs/size_reduce/pth/SHGNet-56_fused_fp32.pth",
+  "file_mb": 32.427,
+  "state_dict_mb": 32.266,
+  "infer_ms_fp32": 289.091,
+  "infer_ms_fused": 200.234,
+  "accuracy_vs_master": {
+    "mean_px": 0.0,
+    "max_px": 0.0,
+    "pierce_px": 0.0,
+    "heatmap_max_abs": 6e-06
+  }
+}

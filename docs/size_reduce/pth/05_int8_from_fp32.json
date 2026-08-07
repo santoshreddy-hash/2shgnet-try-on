@@ -1,0 +1,16 @@
+{
+  "step": 5,
+  "path_name": "INT8_from_FP32",
+  "method": "fx_static_qnnpack_from_fp32",
+  "source_fp32": "outputs/size_reduce/pth/SHGNet-56_fused_fp32.pth",
+  "pth": "outputs/size_reduce/pth/SHGNet-56_int8.pth",
+  "file_mb": 6.671,
+  "infer_ms": 271.575,
+  "accuracy_vs_fp32": {
+    "mean_px": 75.4639,
+    "max_px": 231.2055,
+    "pierce_px": 138.8524,
+    "heatmap_max_abs": 0.725674
+  },
+  "ptq_error": null
+}

@@ -1,0 +1,42 @@
+{
+  "step": 6,
+  "note": "FP16 and INT8 each converted separately from FP32 (no FP32\u2192FP16\u2192INT8 chain)",
+  "comparison": [
+    {
+      "model": "FP32",
+      "source": "master/fused",
+      "pth_mb": 32.427,
+      "infer_ms": 221.289,
+      "mean_px_vs_fp32": 0.0,
+      "pierce_px_vs_fp32": 0.0,
+      "derived_from": "FP32",
+      "path": "outputs/size_reduce/pth/SHGNet-56_fused_fp32.pth"
+    },
+    {
+      "model": "FP16",
+      "source": "from_FP32",
+      "pth_mb": 16.429,
+      "infer_ms": 262.44,
+      "mean_px_vs_fp32": 0.0714,
+      "pierce_px_vs_fp32": 0.0,
+      "derived_from": "FP32",
+      "path": "outputs/size_reduce/pth/SHGNet-56_fp16.pth"
+    },
+    {
+      "model": "INT8",
+      "source": "from_FP32",
+      "pth_mb": 6.671,
+      "infer_ms": 271.575,
+      "mean_px_vs_fp32": 75.4639,
+      "pierce_px_vs_fp32": 138.8524,
+      "derived_from": "FP32",
+      "method": "int8_fx",
+      "path": "outputs/size_reduce/pth/SHGNet-56_int8.pth"
+    }
+  ],
+  "recommendations": {
+    "Desktop": "FP32",
+    "Browser": "FP16",
+    "Mobile": "FP16"
+  }
+}
